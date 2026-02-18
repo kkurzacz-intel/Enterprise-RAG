@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "docarray"
-version = "0.40.0"
+version = "0.41.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
@@ -414,9 +414,9 @@ dependencies = [
     { name = "types-requests" },
     { name = "typing-inspect" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/20/4ce3b1324dcadd62e10a1122f16ddc87b837ae9402791f40859e1ff98b87/docarray-0.40.0.tar.gz", hash = "sha256:c3f3b88b7b6128c10308dddbd21650c9845e270da850cf6718cb1d3d867d5986", size = 195524, upload-time = "2023-12-22T12:12:25.053Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d4/62/1ec46699f621338fc0fe15249ff6ca8aba7d48fd3e34bd8ad761fdd0270c/docarray-0.41.0.tar.gz", hash = "sha256:7fb34eed16f25ba90b1425b263553f3735da987bf8433ff844d754b8b2c3ef81", size = 207945, upload-time = "2025-03-21T08:34:44.552Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/bf/90439e206a5d2df089e3467a703dfa0349f17d73f003ec51367db23bf8de/docarray-0.40.0-py3-none-any.whl", hash = "sha256:86ceadb84cdec2dc9579e2f79823748a3af094c57df4e0441c5f0bac7e63ef97", size = 270232, upload-time = "2023-12-22T12:12:16.923Z" },
+    { url = "https://files.pythonhosted.org/packages/95/fe/4a1fc93d8119087544579b5c8a09a50d5573fcb64fe92fc8143cf8b851ad/docarray-0.41.0-py3-none-any.whl", hash = "sha256:a544ac75f77165b1861d2c19c2993835a635fc2267871c469e1006497a99421d", size = 302815, upload-time = "2025-03-21T08:34:42.207Z" },
 ]
 
 [package.optional-dependencies]
@@ -523,7 +523,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fc/2e/d4fcb2978f826358b673f779f78fa8a32ee37df11920dc2bb5589cbeecef/greenlet-3.2.3-cp311-cp311-macosx_11_0_universal2.whl", hash = "sha256:784ae58bba89fa1fa5733d170d42486580cab9decda3484779f4759345b29822", size = 270219, upload-time = "2025-06-05T16:10:10.414Z" },
     { url = "https://files.pythonhosted.org/packages/16/24/929f853e0202130e4fe163bc1d05a671ce8dcd604f790e14896adac43a52/greenlet-3.2.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0921ac4ea42a5315d3446120ad48f90c3a6b9bb93dd9b3cf4e4d84a66e42de83", size = 630383, upload-time = "2025-06-05T16:38:51.785Z" },
     { url = "https://files.pythonhosted.org/packages/d1/b2/0320715eb61ae70c25ceca2f1d5ae620477d246692d9cc284c13242ec31c/greenlet-3.2.3-cp311-cp311-manylinux2014_ppc64le.manylinux_2_17_ppc64le.whl", hash = "sha256:d2971d93bb99e05f8c2c0c2f4aa9484a18d98c4c3bd3c62b65b7e6ae33dfcfaf", size = 642422, upload-time = "2025-06-05T16:41:35.259Z" },
-    { url = "https://files.pythonhosted.org/packages/bd/49/445fd1a210f4747fedf77615d941444349c6a3a4a1135bba9701337cd966/greenlet-3.2.3-cp311-cp311-manylinux2014_s390x.manylinux_2_17_s390x.whl", hash = "sha256:c667c0bf9d406b77a15c924ef3285e1e05250948001220368e039b6aa5b5034b", size = 638375, upload-time = "2025-06-05T16:48:18.235Z" },
     { url = "https://files.pythonhosted.org/packages/7e/c8/ca19760cf6eae75fa8dc32b487e963d863b3ee04a7637da77b616703bc37/greenlet-3.2.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:592c12fb1165be74592f5de0d70f82bc5ba552ac44800d632214b76089945147", size = 637627, upload-time = "2025-06-05T16:13:02.858Z" },
     { url = "https://files.pythonhosted.org/packages/65/89/77acf9e3da38e9bcfca881e43b02ed467c1dedc387021fc4d9bd9928afb8/greenlet-3.2.3-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:29e184536ba333003540790ba29829ac14bb645514fbd7e32af331e8202a62a5", size = 585502, upload-time = "2025-06-05T16:12:49.642Z" },
     { url = "https://files.pythonhosted.org/packages/97/c6/ae244d7c95b23b7130136e07a9cc5aadd60d59b5951180dc7dc7e8edaba7/greenlet-3.2.3-cp311-cp311-musllinux_1_1_aarch64.whl", hash = "sha256:93c0bb79844a367782ec4f429d07589417052e621aa39a5ac1fb99c5aa308edc", size = 1114498, upload-time = "2025-06-05T16:36:46.598Z" },
@@ -672,7 +671,7 @@ requires-dist = [
     { name = "alembic", specifier = "==1.16.4" },
     { name = "boto3", specifier = "==1.36.26" },
     { name = "celery", specifier = "==5.5.3" },
-    { name = "docarray", extras = ["full"], marker = "extra == 'test'", specifier = "==0.40.0" },
+    { name = "docarray", extras = ["full"], marker = "extra == 'test'", specifier = "==0.41.0" },
     { name = "fastapi", specifier = "==0.120.2" },
     { name = "fastapi", marker = "extra == 'test'", specifier = "==0.120.2" },
     { name = "flower", specifier = "==2.0.1" },
