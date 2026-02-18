@@ -22,7 +22,7 @@ dependencies = [
     "nltk==3.9.1",
     "requests == 2.32.4",
     "urllib3 == 2.6.0",
-    "Pillow == 11.3.0",
+    "Pillow ==12.1.1",
 ]
 
 [project.optional-dependencies]
