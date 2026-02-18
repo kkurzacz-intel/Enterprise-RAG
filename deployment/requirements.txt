@@ -1,4 +1,4 @@
-ansible==9.13.0
+ansible==12.2.0
 kubernetes==32.0.1
 # Kubespray dependencies
 cryptography==45.0.2
