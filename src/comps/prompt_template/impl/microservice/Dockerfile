@@ -5,7 +5,7 @@
 # This Dockerfile is used to build the container image for the RAG reranking microservice.
 
 ARG python_version=3.11
-ARG python_image_version=${python_version}-slim-bookworm
+ARG python_image_version=${python_version}-slim-trixie
 
 FROM python:${python_image_version}
 COPY --from=ghcr.io/astral-sh/uv:0.8.0 /uv /uvx /bin/
@@ -15,9 +15,6 @@ ARG python_version
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends --fix-missing \
     vim && \
-    apt-get install -y --only-upgrade \
-      openssl=3.0.18-1~deb12u2 \
-      libssl3=3.0.18-1~deb12u2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN rm -rf /home/user/.local/lib/python${python_version}/site-packages/*
 RUN rm -rf /usr/local/lib/python${python_version}/site-packages/*
@@ -36,7 +33,7 @@ COPY ./comps/prompt_template/impl/microservice/uv.lock uv.lock
 
 # --locked will fail when any changes in pyproject.toml were introduced
 # Source: https://github.com/astral-sh/uv/blob/main/docs/concepts/projects/sync.md#checking-if-the-lockfile-is-up-to-date
-RUN uv sync --locked --no-cache
+RUN uv sync --locked --no-cache --group security-overrides
 ENV PATH="/home/user/.venv/bin:$PATH"
 
 COPY --chown=user:user ./comps/__init__.py ./comps/__init__.py

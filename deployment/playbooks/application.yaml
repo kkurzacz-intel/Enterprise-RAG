@@ -19,7 +19,6 @@
     log_dir: "{{ deployment_dir }}/ansible-logs"
     tmp_dir: "{{ log_dir }}/tmp"
     secure_logs: true
-    tdx_post_renderer_executable: "{{ playbook_dir }}/../renderer/customize.sh"
 
     # Upload-optimized pipeline configuration (used when upload_pipelines=true)
     # This is the default configuration for upload mode, applied when upload_pipelines flag is set
@@ -111,21 +110,49 @@
       ansible.builtin.include_role:
         name: tdx
         tasks_from: verify_variables.yaml
-        apply:
-          tags:
-            - pre-upgrade
       tags:
         - install
+        - uninstall
         - display-configuration
         - pre-upgrade
+
+    - name: TDX - Kata install
+      ansible.builtin.include_role:
+        name: tdx
+        tasks_from: install_kata.yaml
+      when: tdx.coco.enabled and tdx.coco.install_kata
+      tags:
+        - install
+        - uninstall
 
     - name: TDX Attest
       ansible.builtin.include_role:
         name: tdx
         tasks_from: attest.yaml
+      when: tdx.one_td.enabled and tdx.attestation.enabled
       tags:
         - install
-      when: tdx.enabled and tdx.attestation.enabled
+        - uninstall
+
+    - name: TDX Install kyverno
+      ansible.builtin.include_role:
+        name: tdx
+        tasks_from: manage_kyverno.yaml
+      when: tdx.coco.enabled
+      tags:
+        - install
+        - uninstall
+
+    - name: Hyperthreading status check
+      include_role:
+        name: utils
+        tasks_from: verify_hyperthreading.yaml
+      tags:
+        - install
+        - uninstall
+        - pre-upgrade
+        - update-configuration
+        - topology-preview
 
     - name: Install NRI balloons policy
       include_role:
@@ -188,20 +215,38 @@
         - install
         - uninstall
         - pre-upgrade
+        - update-configuration
+
+    # Uninstall chat_history when upload_pipelines=true
+    - name: Uninstall Chat History when upload_pipelines is enabled
+      kubernetes.core.helm:
+        name: "{{ chat_history.helm.release_name }}"
+        namespace: "{{ chat_history.namespace }}"
+        state: absent
+      when: >
+        upload_pipelines | default(false) | bool
+        and "update-configuration" in ansible_run_tags
+        and chat_history is defined
+      tags:
+        - update-configuration
+      ignore_errors: true
 
     - name: Chat History role
       ansible.builtin.include_role:
         name: chat_history
-      when: chat_history.enabled or "pre-upgrade" in ansible_run_tags
+      when: >
+        (chat_history.enabled or "pre-upgrade" in ansible_run_tags)
+        and not (upload_pipelines | default(false) | bool and "update-configuration" in ansible_run_tags)
       tags:
         - install
         - uninstall
         - pre-upgrade
+        - update-configuration
 
     - name: Audio role
       ansible.builtin.include_role:
         name: audio
-      when: audio.enabled or "pre-upgrade" in ansible_run_tags
+      when: (audio is defined and audio.enabled) or "pre-upgrade" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -217,10 +262,10 @@
         - pre-upgrade
         - update-configuration
 
-    - name: Ingress role
+    - name: Gateway role
       ansible.builtin.include_role:
-        name: ingress
-      when: ingress.enabled or "pre-upgrade" in ansible_run_tags
+        name: gateway
+      when: gateway.enabled or "pre-upgrade" in ansible_run_tags
       tags:
         - install
         - uninstall

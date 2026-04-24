@@ -7,6 +7,7 @@ metadata:
   name: kubernetes-api-upstream
   namespace: {{ .namespace }}
 spec:
+  ingressClassName: {{ $.Values.ingressClassName }}
   scheme: {{ .scheme }}
   loadbalancer:
     type: roundrobin
@@ -29,9 +30,14 @@ metadata:
     helm.sh/chart: {{ $.Chart.Name }}-{{ $.Chart.Version }}
     app.kubernetes.io/instance: {{ $.Release.Name }}
 spec:
+  ingressClassName: {{ $.Values.ingressClassName }}
   http:
   - name: {{ printf "%s-route" .name }}
     match:
+      {{- if $.Values.routeHost }}
+      hosts:
+        - {{ $.Values.routeHost | quote }}
+      {{- end }}
       paths:
       - {{ .path }}
     {{- if eq .backend_service "kubernetes" }}
@@ -59,7 +65,6 @@ spec:
         resource_registration_endpoint: {{ $.Values.auth.resource_registration_endpoint }}
         token_endpoint: {{ $.Values.auth.token_endpoint }}
         client_id: {{ $.Values.auth.client_id }}
-        client_secret: "$ENV://CLIENT_SECRET"
         policy_enforcement_mode: "ENFORCING"
         ssl_verify: false
         permissions:

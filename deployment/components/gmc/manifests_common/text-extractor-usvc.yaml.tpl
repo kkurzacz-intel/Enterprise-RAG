@@ -61,9 +61,7 @@ spec:
   template:
     metadata:
       {{- include "manifest.podLabels" (list .filename .) | nindent 6 }}
-      {{- include "manifest.tdx.annotations" (list .filename .) | nindent 6 }}
     spec:
-      {{- include "manifest.tdx.runtimeClassName" (list .filename .) | nindent 6 }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       serviceAccountName: text-extractor
@@ -113,12 +111,14 @@ spec:
               port: text-extractor
             initialDelaySeconds: 5
             periodSeconds: 30
+            timeoutSeconds: 10
           readinessProbe:
             httpGet:
               path: v1/health_check
               port: text-extractor
             initialDelaySeconds: 5
             periodSeconds: 30
+            timeoutSeconds: 10
           startupProbe:
             failureThreshold: 120
             httpGet:
@@ -126,6 +126,7 @@ spec:
               port: text-extractor
             initialDelaySeconds: 5
             periodSeconds: 30
+            timeoutSeconds: 10
           resources:
             {{- $defaultValues := "{requests: {cpu: '1', memory: '1Gi'}, limits: {cpu: '4', memory: '8Gi'}}" -}}
             {{- include "manifest.getResource" (list .filename $defaultValues .Values) | nindent 12 }}

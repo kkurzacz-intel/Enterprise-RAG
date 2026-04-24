@@ -3,6 +3,7 @@
 # Copyright (C) 2024-2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
+import sys
 from pathlib import Path
 
 import allure
@@ -14,6 +15,7 @@ import pytest
 import tarfile
 import urllib3
 import yaml
+import glob
 
 from tests.e2e.validation.buildcfg import cfg
 from tests.e2e.validation.constants import TEST_FILES_DIR
@@ -21,19 +23,56 @@ from tests.e2e.helpers.api_request_helper import ApiRequestHelper
 from tests.e2e.helpers.chatqa_api_helper import ChatQaApiHelper
 from tests.e2e.helpers.chat_history_helper import ChatHistoryHelper
 from tests.e2e.helpers.docsum_helper import DocSumHelper
-
 from tests.e2e.helpers.edp_helper import EdpHelper
 from tests.e2e.helpers.fingerprint_api_helper import FingerprintApiHelper
 from tests.e2e.helpers.guard_helper import GuardHelper
 from tests.e2e.helpers.istio_helper import IstioHelper
 from tests.e2e.helpers.k8s_helper import K8sHelper
 from tests.e2e.helpers.keycloak_helper import KeycloakHelper
+from tests.e2e.helpers.sharepoint_helper import SharepointHelper
 
 # List of namespaces to fetch logs from
-NAMESPACES = ["auth-apisix", "chatqa",  "docsum", "edp", "fingerprint", "dataprep", "system", "istio-system", "rag-ui"]
+NAMESPACES = ["auth", "auth-apisix", "chat-history", "chatqa", "docsum", "edp", "erag-gateway", "fingerprint",
+              "istio-system", "rag-ui", "seaweedfs", "system", "vdb"]
 TEST_LOGS_DIR = "test_logs"
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_log_filename(prefix):
+    """Generate a unique log filename with a timestamp."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{prefix}_{timestamp}.log"
+
+
+class TeeWriter:
+    """
+    Duplicates writes to both the original stream and a log file so that the
+    full pytest terminal output (including 'Captured log teardown' sections,
+    tracebacks, test results, etc.) is preserved in a file.
+    """
+
+    def __init__(self, original, log_file_handle):
+        self._original = original
+        self._log_file = log_file_handle
+
+    def write(self, data):
+        self._original.write(data)
+        try:
+            self._log_file.write(data)
+            self._log_file.flush()
+        except ValueError:
+            pass  # file already closed during teardown
+
+    def flush(self):
+        self._original.flush()
+        try:
+            self._log_file.flush()
+        except ValueError:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
 
 
 def pytest_addoption(parser):
@@ -47,7 +86,18 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     """
     Load build configuration from the specified YAML file and store it in the global cfg dictionary.
+    Tee stdout/stderr to a log file to capture the full pytest terminal output.
     """
+    # Set up tee-writing so the full terminal output (including "Captured log teardown"
+    # sections, tracebacks, test results, etc.) is saved to a file.
+    full_log_path = _generate_log_filename("tests_output")
+    log_fh = open(full_log_path, "w", encoding="utf-8")
+    config._full_log_fh = log_fh
+    config._original_stdout = sys.stdout
+    config._original_stderr = sys.stderr
+    sys.stdout = TeeWriter(sys.stdout, log_fh)
+    sys.stderr = TeeWriter(sys.stderr, log_fh)
+
     # Manually configure logging here since pytest configures it only after this hook
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger(__name__)
@@ -66,6 +116,21 @@ def pytest_configure(config):
     root = logging.getLogger()
     for h in root.handlers[:]:
         root.removeHandler(h)
+
+
+def pytest_unconfigure(config):
+    """
+    Restore original stdout/stderr and close the full-output log file.
+    """
+    original_stdout = getattr(config, "_original_stdout", None)
+    original_stderr = getattr(config, "_original_stderr", None)
+    if original_stdout:
+        sys.stdout = original_stdout
+    if original_stderr:
+        sys.stderr = original_stderr
+    log_fh = getattr(config, "_full_log_fh", None)
+    if log_fh:
+        log_fh.close()
 
 
 def pytest_runtest_call(item):
@@ -97,9 +162,88 @@ def pytest_collection_modifyitems(config, items):
         add_marker(item, "feature", pipeline_tag)
         add_marker(item, "feature", llm_model_tag)
 
+    remaining, deselected = remove_skipped_tests(items)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = remaining
+
 
 def add_marker(item, label_name, label_value):
     item.add_marker(allure.label(label_name, label_value))
+
+
+def remove_skipped_tests(items):
+    """
+    Filter out tests with skip markers from the collection phase so they
+    are fully deselected rather than appearing as 'Skipped' in the report.
+    """
+    remaining_items = []
+    deselected_items = []
+    for item in items:
+        skip_marker = item.get_closest_marker("skip")
+        if skip_marker:
+            deselected_items.append(item)
+            continue
+        remaining_items.append(item)
+    return remaining_items, deselected_items
+
+
+# Track tests that were skipped at runtime
+_runtime_skipped_tests = []
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """
+    Detect tests that are skipped at runtime (pytest.skip() inside test body)
+    and track them for removal from allure results.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if report.skipped and call.when in ("call", "setup"):
+        _runtime_skipped_tests.append(item.nodeid)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """
+    Remove allure result files for tests that were skipped at runtime,
+    so they don't appear in the Allure report at all.
+    """
+    if not _runtime_skipped_tests:
+        return
+
+    allure_dir = session.config.option.__dict__.get("allure_report_dir", None)
+    if not allure_dir:
+        # Try the --alluredir option
+        for arg in session.config.invocation_params.args:
+            if isinstance(arg, str) and arg.startswith("--alluredir"):
+                if "=" in arg:
+                    allure_dir = arg.split("=", 1)[1]
+                break
+        if not allure_dir:
+            allure_dir = session.config.getoption("--alluredir", default=None)
+
+    if not allure_dir or not os.path.isdir(allure_dir):
+        return
+
+    import json as json_module
+    for result_file in glob.glob(os.path.join(allure_dir, "*-result.json")):
+        try:
+            with open(result_file, "r") as f:
+                data = json_module.load(f)
+            full_name = data.get("fullName", "")
+            test_name = data.get("name", "")
+            status = data.get("status", "")
+            if status == "skipped":
+                # Match by checking if any tracked nodeid is part of the fullName
+                for nodeid in _runtime_skipped_tests:
+                    # nodeid format: tests/e2e/validation/test_edp.py::test_edp_rbac
+                    test_func = nodeid.split("::")[-1]
+                    if test_func == test_name or test_func in full_name:
+                        os.remove(result_file)
+                        break
+        except Exception:
+            continue
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -130,10 +274,25 @@ def keycloak_helper(request, k8s_helper, suppress_logging):
 
 
 @pytest.fixture(scope="session", autouse=True)
+def validation_user_persistent(keycloak_helper, suppress_logging):
+    """
+    No-op by default. Overridden in lifecycle/conftest.py for backup-restore tests.
+
+    Backup-restore tests require a permanent validation user that survives the restore
+    cycle (erag-admin password is reset during restore, breaking token-based auth).
+    Regular e2e/e2e-ui tests use erag-admin credentials via the standard flow.
+    """
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def temporarily_remove_user_required_actions(keycloak_helper, suppress_logging):
     """
     Disable the required actions for the erag-admin user temporarily to allow obtaining the access token without
     forcing to change the password. Get it back after the tests are done.
+
+    Note: Still autouse because UI tests log in as erag-admin via the browser,
+    bypassing keycloak_helper token management.
     """
     required_actions = keycloak_helper.read_current_required_actions(keycloak_helper.admin_access_token,
                                                                      keycloak_helper.erag_admin_username)
@@ -145,6 +304,50 @@ def temporarily_remove_user_required_actions(keycloak_helper, suppress_logging):
     if required_actions:
         keycloak_helper.revert_required_actions(required_actions, keycloak_helper.admin_access_token,
                                                 keycloak_helper.erag_admin_username)
+
+
+@pytest.fixture(scope="session")
+def bootstrap_sso_user(keycloak_helper, suppress_logging, temporarily_remove_user_required_actions):
+    """
+    Bootstrap SSO users by performing the initial federated login flow for each.
+    This handles the Keycloak first-broker-login pages (profile update, account linking)
+    that appear on the first SSO login. Subsequent SSO logins within the session
+    will skip these pages because Keycloak remembers the linked identity.
+
+    Note: The first-broker-login "review profile" page is NOT a Keycloak required action —
+    it is part of Keycloak's identity provider first-login flow and only appears once
+    per federated user. No required-action manipulation is needed.
+    """
+    _oidc = cfg.get("keycloak", {}).get("oidc", {})
+    if not all(_oidc.get(k) for k in ("endpoint", "alias", "client_id", "tenant_id", "client_secret")):
+        logger.info("OIDC not configured — skipping SSO user bootstrap")
+        yield
+        return
+
+    # Bootstrap SSO admin user
+    if keycloak_helper.erag_sso_admin_password:
+        logger.info("Bootstrapping SSO admin user (initial federated login)")
+        try:
+            keycloak_helper.bootstrap_sso_user("sso_admin")
+        except Exception as e:
+            logger.error(f"Failed to bootstrap SSO admin user: {e}")
+            raise
+    else:
+        logger.info("SSO admin password not set — skipping SSO admin bootstrap")
+
+    # Bootstrap SSO regular user
+    if keycloak_helper.erag_sso_user_password:
+        logger.info("Bootstrapping SSO regular user (initial federated login)")
+        try:
+            keycloak_helper.bootstrap_sso_user("sso_user")
+        except Exception as e:
+            logger.error(f"Failed to bootstrap SSO regular user: {e}")
+            raise
+    else:
+        logger.info("SSO user password not set — skipping SSO user bootstrap")
+
+    yield
+
 
 
 @pytest.fixture(scope="session")
@@ -164,16 +367,38 @@ def temporarily_remove_regular_user_required_actions(keycloak_helper):
                                                 keycloak_helper.erag_user_username)
 
 
+
+@pytest.fixture(scope="session")
+def temporarily_remove_maintainer_required_actions(keycloak_helper):
+    """
+    Temporarily remove required actions for the maintainer user to allow obtaining an access token.
+    """
+    required_actions = keycloak_helper.read_current_required_actions(keycloak_helper.admin_access_token,
+                                                                     keycloak_helper.erag_maintainer_username)
+    if required_actions:
+        keycloak_helper.remove_required_actions(keycloak_helper.admin_access_token,
+                                                keycloak_helper.erag_maintainer_username)
+    yield
+    # Restore original settings after tests
+    if required_actions:
+        keycloak_helper.revert_required_actions(required_actions, keycloak_helper.admin_access_token,
+                                                keycloak_helper.erag_maintainer_username)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def disable_guards_at_startup(guard_helper, suppress_logging, temporarily_remove_user_required_actions):
     """
     Disable all guards at the beginning of the test suite.
-    Note that supress_logging fixture is deliberately placed here to ensure that it is executed
-    before this fixture (otherwise we'd see a lot of unwanted logs at startup)
+    Note that suppress_logging fixture is deliberately placed here to ensure that it is executed
+    before this fixture (otherwise we'd see a lot of unwanted logs at startup).
     """
     fingerprint_enabled = cfg.get("fingerprint", {}).get("enabled")
-    if fingerprint_enabled:
-        guard_helper.disable_all_guards()
+    if not fingerprint_enabled:
+        yield
+        return
+
+    logger.info("Disabling all guards using permanent validation user")
+    guard_helper.disable_all_guards()
     yield
 
 
@@ -218,27 +443,30 @@ def collect_k8s_logs(request):
 
 
 @pytest.fixture(scope="session")
-def edp_helper(keycloak_helper):
+def edp_helper(keycloak_helper, validation_user_persistent):
     return EdpHelper(keycloak_helper=keycloak_helper)
 
+@pytest.fixture(scope="session")
+def sharepoint_helper(keycloak_helper):
+    return SharepointHelper()
 
 @pytest.fixture(scope="session")
-def chatqa_api_helper(keycloak_helper):
+def chatqa_api_helper(keycloak_helper, validation_user_persistent):
     return ChatQaApiHelper(keycloak_helper)
 
 
 @pytest.fixture(scope="session")
-def chat_history_helper(keycloak_helper):
+def chat_history_helper(keycloak_helper, validation_user_persistent):
     return ChatHistoryHelper(keycloak_helper)
 
 
 @pytest.fixture(scope="session")
-def docsum_helper(keycloak_helper):
+def docsum_helper(keycloak_helper, validation_user_persistent):
     return DocSumHelper(keycloak_helper)
 
 
 @pytest.fixture(scope="session")
-def fingerprint_api_helper(keycloak_helper):
+def fingerprint_api_helper(keycloak_helper, validation_user_persistent):
     return FingerprintApiHelper(keycloak_helper)
 
 
@@ -270,8 +498,11 @@ def temporarily_remove_brute_force_detection(keycloak_helper):
 
 @pytest.fixture(scope="session")
 def test_language():
-    """Get the test language from environment variable"""
-    return os.getenv("TEST_LANG", "en")
+    """Get the test language from config or environment variable"""
+    llm_model = cfg.get("llm_model", "")
+    if "CYFRAGOVPL/PLLuM-12B-chat" in llm_model or "PLLuM" in llm_model or "Bielik" in llm_model:
+        return "pl"
+    return cfg.get("test_language") or os.getenv("TEST_LANG", "en")
 
 
 @pytest.fixture(scope="session")

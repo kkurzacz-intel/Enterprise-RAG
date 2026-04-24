@@ -1,6 +1,6 @@
 # Configure the Intel&reg; AI for Enterprise RAG pipelines
 
-Intel&reg; AI for Enterprise RAG pipelines are configured based on [manifests](../deployment/components/gmc/microservices-connector/config/manifests) and flow configuration files:
+Intel&reg; AI for Enterprise RAG pipelines are configured based on [manifests](../deployment/components/gmc/manifests_common) and flow configuration files:
 - ChatQA pipeline: [deployment/pipelines/chatqa/](../deployment/pipelines/chatqa/)
 - Document Summarization (Docsum) pipeline: [deployment/pipelines/docsum/](../deployment/pipelines/docsum/)
 
@@ -8,7 +8,7 @@ Intel&reg; AI for Enterprise RAG pipelines are configured based on [manifests](.
 
 When building the pipeline, we pass the `flow configuration file` to the [configuration file](../deployment/README.md#prepare-configuration-files)
 
-The PODs settings are primarily managed by the appropriate `.env` files for each microservice. The model name can be set in the Helm [`values.yaml`](../deployment/components/gmc/microservices-connector/helm/values.yaml) file and will be propagated further.
+The PODs settings are primarily managed by the appropriate `.env` files for each microservice. The model name can be set in the Helm [`values.yaml`](../deployment/components/gmc/values.yaml) file and will be propagated further.
 
 Based on this configuration, K8s knows which POD should be deployed.
 
@@ -38,7 +38,6 @@ The resource configurations are defined in separate YAML files for each pipeline
 **ChatQA Pipeline:**
 - [`resources-reference-cpu.yaml`](../deployment/pipelines/chatqa/resources-reference-cpu.yaml)
 - [`resources-reference-hpu.yaml`](../deployment/pipelines/chatqa/resources-reference-hpu.yaml)
-- [`resources-tdx.yaml`](../deployment/components/gmc/microservices-connector/helm/resources-tdx.yaml)
 
 **Docsum Pipeline:**
 - [`resources-reference-cpu.yaml`](../deployment/pipelines/docsum/resources-reference-cpu.yaml)
@@ -78,7 +77,7 @@ Intel&reg; AI for Enterprise RAG pipelines allow you to select a model from a pr
 - [`resources-model-cpu.yaml`](../deployment/pipelines/chatqa/resources-model-cpu.yaml) (for CPU-based models)
 - [`resources-model-hpu.yaml`](../deployment/pipelines/chatqa/resources-model-hpu.yaml) (for Gaudi/HPU-based models)
 
-Each model entry in these files specifies recommended settings such as environment variables and command-line arguments. You can select any model from the list by putting it into your Helm [`values.yaml`](../deployment/components/gmc/microservices-connector/helm/values.yaml) file.
+Each model entry in these files specifies recommended settings such as environment variables and command-line arguments. You can select any model from the list by putting it into your Helm [`values.yaml`](../deployment/components/gmc/values.yaml) file.
 
 ### How to add or modify a model
 
@@ -95,7 +94,7 @@ To use a custom model or adjust the configuration of an existing one:
       "casperhansen/llama-3-8b-instruct-awq":
         configMapValues:
           VLLM_SKIP_WARMUP: "false"
-          VLLM_CPU_KVCACHE_SPACE: "40"
+          VLLM_CPU_KVCACHE_SPACE: "10"
           VLLM_DTYPE: "bfloat16"
           VLLM_MAX_NUM_SEQS: "256"
           VLLM_TP_SIZE: "1"
@@ -105,7 +104,7 @@ To use a custom model or adjust the configuration of an existing one:
         extraCmdArgs: ["--pipeline-parallel-size", "$(VLLM_PP_SIZE)", "--dtype", "$(VLLM_DTYPE)", "--max_model_len", "$(VLLM_MAX_MODEL_LEN)", "--max-num-seqs", "$(VLLM_MAX_NUM_SEQS)", "--disable-log-requests", "--download-dir", "/data", "--quantization", "awq"]
    ```
 
-3. **Reference the model** in your Helm [`values.yaml`](../deployment/components/gmc/microservices-connector/helm/values.yaml) file:
+3. **Reference the model** in your Helm [`values.yaml`](../deployment/components/gmc/values.yaml) file:
    ```yaml
    llm_model: &cpu_model "casperhansen/llama-3-8b-instruct-awq"
    ```
@@ -126,7 +125,7 @@ Some models in the configuration files use YAML anchors (such as `&generic_base_
 - If you want to change the configuration for all the models that use a particular base, you can edit the base config itself (the section with the anchor).
 - If you want to change the configuration for only one model, copy the base config, paste it under your desired model name, and modify it as needed.
 
-This willl help you avoid unintentional changes when only one model needs to be customized.
+This will help you avoid unintentional changes when only one model needs to be customized.
 
 **Example:**
 
@@ -137,7 +136,7 @@ modelConfigs:
   generic-base-awq-cpu: &generic_base_awq_cpu
     configMapValues:
       VLLM_SKIP_WARMUP: "false"
-      VLLM_CPU_KVCACHE_SPACE: "40"
+      VLLM_CPU_KVCACHE_SPACE: "10"
       VLLM_DTYPE: "bfloat16"
       VLLM_MAX_NUM_SEQS: "256"
       VLLM_TP_SIZE: "1"
@@ -157,7 +156,7 @@ modelConfigs:
   "casperhansen/llama-3-8b-instruct-awq":
     configMapValues:
       VLLM_SKIP_WARMUP: "false"
-      VLLM_CPU_KVCACHE_SPACE: "60"  # changed value
+      VLLM_CPU_KVCACHE_SPACE: "40"  # changed value
       VLLM_DTYPE: "bfloat16"
       VLLM_MAX_NUM_SEQS: "256"
       VLLM_TP_SIZE: "1"
@@ -196,6 +195,26 @@ pipelines:
 
 This allows you to control which model list and configuration are used for each pipeline deployment.
 
+
+## Query Rewrite Pipeline
+
+The query rewrite pipeline improves retrieval quality by reformulating user queries before the retrieval step. It uses a dedicated vLLM instance to rewrite each query in a single LLM call — contextualizing it with conversation history when available and optimizing it for document search.
+
+To enable query rewriting, set the `pipelinePath` in your configuration to the `cpu-queryrewrite.yaml` example:
+
+```yaml
+pipelines:
+  - namespace: chatqa
+    samplePath: chatqa/examples/cpu-queryrewrite.yaml
+    resourcesPath: chatqa/resources-reference-cpu.yaml
+    modelConfigPath: chatqa/resources-model-cpu.yaml
+    type: chatqa
+```
+
+The query rewrite model is configured via `query_rewrite_model` in your inventory config. For the full list of environment variables and configuration options, see the [Query Rewrite microservice documentation](../src/comps/query_rewrite/README.md).
+
+> [!NOTE]
+> Query rewriting deploys an additional vLLM instance and increases resource consumption. Review your cluster capacity before enabling this feature.
 
 ## Switching Pipeline Modes
 

@@ -21,7 +21,8 @@ from tests.e2e.validation.constants import DATAPREP_UPLOAD_DIR
 logger = logging.getLogger(__name__)
 
 LINK_DELETION_TIMEOUT_S = 60
-FILE_UPLOAD_TIMEOUT_S = 10800  # 3 hours
+FILE_UPLOAD_TIMEOUT_S = 300  # 5 minutes
+FILE_DELETION_TIMEOUT_S = 120  # 2 minutes
 LINK_UPLOAD_TIMEOUT = 300  # 5 minutes
 DATAPREP_STATUS_FLOW = ["uploaded", "processing", "text_extracting", "text_compression", "text_splitting", "embedding", "late_chunking", "ingested"]
 
@@ -56,6 +57,144 @@ class EdpHelper(ApiRequestHelper):
             headers=self.get_headers(as_user),
             verify=False
         )
+        return response
+
+    def list_sites(self):
+        """Call api/v1/edp/sharepoint/sites"""
+        response = requests.get(
+            url=f"{self.edp_api_path}/sharepoint/sites",
+            headers=self.get_headers(),
+            verify=False
+        )
+        return response
+
+    @staticmethod
+    def _extract_site_name(site_url_or_name):
+        """Extract the short site name from a full SharePoint URL.
+        E.g. 'https://intel.sharepoint.com/sites/test-site' -> 'test-site'
+        If the input is already a short name (no '/'), return it as-is.
+        """
+        if "/" in site_url_or_name:
+            return site_url_or_name.rstrip("/").rsplit("/", 1)[-1]
+        return site_url_or_name
+
+    def get_site_id_by_name(self, site_name):
+        """Get site ID by site name or URL. Return None if site with the given name is not found."""
+        short_name = self._extract_site_name(site_name)
+        sites = self.list_sites()
+        site_id = next((site["id"] for site in sites.json().get("sites", []) if site["name"] == short_name), None)
+        if not site_id:
+            logger.warning(f"Site with name {short_name} not found.")
+        return site_id
+
+    def connect_site(self, site_url):
+        """Connect the site with the given URL or name.
+        If a short name is provided (e.g. from restore logic), it is not sent as a URL.
+        """
+        logger.info(f"Connecting site: {site_url}")
+        payload = {"site_url": site_url}
+        response = requests.post(
+            url=f"{self.edp_api_path}/sharepoint/sites",
+            headers=self.get_headers(),
+            json=payload,
+            verify=False
+        )
+        return response
+
+    def disconnect_site(self, site_name, site_id=None):
+        """Disconnect the site with the given name. If there is no connected site with such name, return 404 response"""
+        if not site_id:
+            site_id = self.get_site_id_by_name(site_name)
+        if not site_id:
+            logger.warning(f"Site with name {site_name} not found. Returning 404.")
+            response = requests.Response()
+            response.status_code = 404
+            return response
+        logger.info(f"Disconnecting site with id: {site_id} and name: {site_name}")
+
+        response = requests.delete(
+            url=f"{self.edp_api_path}/sharepoint/sites/{site_id}",
+            headers=self.get_headers(),
+            verify=False
+        )
+
+        return response
+
+    def sync_sharepoint(self, as_user=False) -> requests.Response:
+        """
+        Trigger a SharePoint sync via the EDP API.
+        POST /api/v1/edp/sharepoint/sync
+        """
+        url = f"{self.edp_api_path}/sharepoint/sync"
+        response = requests.post(
+            url,
+            headers=self.get_headers(as_user),
+            verify=False
+        )
+        logger.info(f"SharePoint sync triggered. Status: {response.status_code}")
+        return response
+
+    def upload_to_sharepoint(self, site_name, file_path, site_id=None, as_user=False) -> requests.Response:
+        """
+        Upload a file to a connected SharePoint site via the EDP API.
+        POST /api/v1/edp/sharepoint/files
+        """
+        url = f"{self.edp_api_path}/sharepoint/files"
+        if not site_id:
+            site_id = self.get_site_id_by_name(site_name)
+        params = {"site_id": site_id}
+        headers = self.get_headers(as_user)
+        headers.pop('Content-Type', None)
+
+        with open(file_path, 'rb') as f:
+            file_name = os.path.basename(file_path)
+            files = {'file': (file_name, f, 'text/plain')}
+            response = requests.post(
+                url,
+                params=params,
+                headers=headers,
+                files=files,
+                verify=False
+            )
+        logger.info(f"File {file_name} upload to SharePoint site {site_name} (site_id: {site_id}) attempted. Status: {response.status_code}")
+        return response
+
+    def remove_from_sharepoint(self, site_name, object_name) -> requests.Response:
+        """
+        Delete a file from a connected SharePoint site via the EDP API.
+        DELETE /api/v1/edp/sharepoint/files
+        """
+        url = f"{self.edp_api_path}/sharepoint/files"
+        payload = {
+            "site_name": self._extract_site_name(site_name),
+            "object_name": object_name
+        }
+        response = requests.delete(
+            url,
+            headers=self.get_headers(),
+            json=payload,
+            verify=False
+        )
+        logger.info(f"File {object_name} removal from SharePoint site {site_name} attempted. Status: {response.status_code}")
+        return response
+
+    def get_file_url(self, site_name, object_name) -> requests.Response:
+        """
+        Fetch a URL used to download an uploaded file from a SharePoint site via the EDP API.
+        POST /api/v1/edp/sharepoint/file-url
+        """
+        url = f"{self.edp_api_path}/sharepoint/file-url"
+        payload = {
+            "site_name": self._extract_site_name(site_name),
+            "object_name": object_name
+        }
+        response = requests.post(
+            url,
+            headers=self.get_headers(),
+            json=payload,
+            verify=False
+        )
+        logger.info(f"File URL request for {object_name} on site {site_name}. Status: {response.status_code}")
         return response
 
     def list_links(self, as_user=False):
@@ -221,8 +360,10 @@ class EdpHelper(ApiRequestHelper):
         logger.debug(f"Attempting to upload file {file_path} using presigned URL")
         try:
             headers = {}
-            if "authorization" in self.get_headers(as_user):
-                headers["authorization"] = self.get_headers(as_user)["authorization"]
+            if (cfg.get("edp", {}).get("storageType") == "seaweedfs"
+                    and cfg.get("edp", {}).get("rbac", {}).get("enabled", False)):
+                if "authorization" in self.get_headers(as_user):
+                    headers["authorization"] = self.get_headers(as_user)["authorization"]
 
             with open(file_path, 'rb') as f:
                 response = requests.put(presigned_url, data=f, verify=False, headers=headers)
@@ -282,7 +423,9 @@ class EdpHelper(ApiRequestHelper):
             files = self.list_files().json()
             file_found = False
             for file in files:
-                if file.get("object_name") == filename:
+                if filename == file.get("object_name"):
+                    if file.get("status") == "deleting":
+                        continue
                     file_found = True
                     if file.get("status") == "error" and desired_status != "error":
                         last_status_message = "no previous status known."
@@ -301,9 +444,29 @@ class EdpHelper(ApiRequestHelper):
                         break
             if not file_found:
                 logger.warning(f"File {filename} is not present in the list of files")
+                time.sleep(1)
 
         raise UploadTimeoutException(
             f"Timed out after {timeout} seconds while waiting for the file to be uploaded")
+
+    def wait_for_file_deletion(self, filename, timeout=FILE_DELETION_TIMEOUT_S):
+        """Wait for the file to be deleted and no longer present in the list of files"""
+        sleep_interval = 5
+        start_time = time.time()
+        while time.time() < start_time + timeout:
+            files = self.list_files().json()
+            file_found = any(file.get("object_name") == filename for file in files)
+
+            if not file_found:
+                logger.info(f"File {filename} has been deleted. "
+                      f"Elapsed time: {round(time.time() - start_time, 1)}s")
+                return True
+            else:
+                logger.info(f"Waiting {sleep_interval}s for file {filename} to be deleted. ")
+                time.sleep(sleep_interval)
+
+        raise DeleteTimeoutException(
+            f"Timed out after {timeout} seconds while waiting for the file to be deleted")
 
     def wait_for_all_files_ingestion(self, filenames: set, timeout=FILE_UPLOAD_TIMEOUT_S) -> None:
         """Wait for all files to be uploaded and ingested.
@@ -357,11 +520,12 @@ class EdpHelper(ApiRequestHelper):
             )
 
     def upload_file_and_wait_for_ingestion(self, file_path, bucket=None):
-        response = self.generate_presigned_url(file_path, bucket=bucket)
+        file_name = os.path.basename(file_path)
+        response = self.generate_presigned_url(file_name, bucket=bucket)
         presigned_url = response.json().get("url")
         response = self.upload_file(file_path, presigned_url)
         assert response.status_code == 200
-        return self.wait_for_file_upload(file_path, "ingested", timeout=180)
+        return self.wait_for_file_upload(file_name, "ingested", timeout=180)
 
     @contextmanager
     def ephemeral_upload(self, file_path, desired_status="ingested", bucket=None, timeout=180):
@@ -408,8 +572,10 @@ class EdpHelper(ApiRequestHelper):
         logger.info("Attempting to delete file using presigned URL")
 
         headers = {}
-        if "authorization" in self.get_headers():
-            headers["authorization"] = self.get_headers()["authorization"]
+        if (cfg.get("edp", {}).get("storageType") == "seaweedfs"
+                and cfg.get("edp", {}).get("rbac", {}).get("enabled", False)):
+            if "authorization" in self.get_headers():
+                headers["authorization"] = self.get_headers()["authorization"]
 
         return requests.delete(presigned_url, verify=False, headers=headers)
 
@@ -417,8 +583,10 @@ class EdpHelper(ApiRequestHelper):
         """Delete files asynchronously."""
 
         headers = {}
-        if "authorization" in self.get_headers():
-            headers["authorization"] = self.get_headers()["authorization"]
+        if (cfg.get("edp", {}).get("storageType") == "seaweedfs"
+                and cfg.get("edp", {}).get("rbac", {}).get("enabled", False)):
+            if "authorization" in self.get_headers():
+                headers["authorization"] = self.get_headers()["authorization"]
 
         async with aiohttp.ClientSession() as session:
             for presigned_url in presigned_urls:
@@ -456,8 +624,9 @@ class EdpHelper(ApiRequestHelper):
         """Write data to the temp file until we reach the desired size"""
         chunk_size = 1024   # Write in chunks of 1KB
         current_size = 0
+        line = "The quick brown fox jumps over the lazy dog. " * 23 + "\n"  # ~1035 chars
         while current_size < size:
-            chunk = 'A' * chunk_size
+            chunk = line[:chunk_size]
             temp_file.write(chunk)
             current_size += chunk_size
             temp_file.flush()

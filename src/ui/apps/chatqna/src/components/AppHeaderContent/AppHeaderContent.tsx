@@ -28,7 +28,7 @@ const APP_VERSION =
   getChatQnAAppEnv("ERAG_VERSION") || import.meta.env.VITE_APP_VERSION;
 const MAINTENANCE_MODE = getChatQnAAppEnv("MAINTENANCE_MODE");
 const USER_GUIDE_URL =
-  "https://github.com/opea-project/Enterprise-RAG/blob/main/docs/Intel_AI_for_Enterprise_RAG_User_Guide_2.1.0.pdf";
+  "https://github.com/opea-project/Enterprise-RAG/blob/main/docs/Intel_AI_for_Enterprise_RAG_ChatQnA_User_Guide_2.2.0.pdf";
 
 export const AppHeaderLeftSideContent = () => {
   const location = useLocation();
@@ -41,7 +41,7 @@ export const AppHeaderLeftSideContent = () => {
   };
 
   if (MAINTENANCE_MODE === "true") {
-    return <AppNameText appName="Intel AI&reg; for Enterprise RAG" />;
+    return <AppNameText appName={APP_NAME} />;
   }
 
   return (
@@ -52,7 +52,7 @@ export const AppHeaderLeftSideContent = () => {
           onPress={handleToggleSideMenu}
         />
       )}
-      <AppNameText appName="Intel AI&reg; for Enterprise RAG" />
+      <AppNameText appName={APP_NAME} />
     </>
   );
 };
@@ -72,7 +72,7 @@ export const AppHeaderRightSideContent = ({
       {isSpecificChatRoute && onNewChat && (
         <NewChatButton onPress={onNewChat} />
       )}
-      {keycloakService.isAdminUser() && <ViewSwitchButton />}
+      <ViewSwitchButton />
       <ColorSchemeSwitch />
       <AboutDialog
         appName={APP_NAME}

@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 {{- $modelName := required "Please specify a valid embedding_model_name name in your Helm chart values" .Values.embedding_model_name }}
 {{- $port := "8108" }}
+{{- $trustedModels := list "jinaai/jina-embeddings-v3" "nomic-ai/nomic-embed-text-v1" }}
+{{- $trustRemoteCode := has $modelName $trustedModels }}
 
 apiVersion: v1
 kind: ConfigMap
@@ -93,9 +95,7 @@ spec:
       labels:
         {{- include "manifest.selectorLabels" (list $.filename $) | nindent 8 }}
         embedding-node: {{ .name }}
-      {{- include "manifest.tdx.annotations" (list $.filename $) | nindent 6 }}
     spec:
-      {{- include "manifest.tdx.runtimeClassName" (list $.filename $) | nindent 6 }}
       nodeSelector:
         {{- toYaml .nodeSelector | nindent 8 }}
       affinity:
@@ -153,7 +153,7 @@ spec:
                 {{- if $.Values.balloons.enabled }}
                 export VLLM_CPU_OMP_THREADS_BIND=$(tr ' ' ',' < /sys/fs/cgroup/cpuset.cpus.effective)
                 {{- end }}
-                python3 -m vllm.entrypoints.openai.api_server --model {{ $modelName }} --dtype $VLLM_DTYPE --enforce_eager --download-dir /data --host 0.0.0.0 --port {{ $port }}
+                python3 -m vllm.entrypoints.openai.api_server --model {{ $modelName }} --dtype $VLLM_DTYPE --enforce_eager {{ if $trustRemoteCode }}--trust-remote-code {{ end }}--download-dir /data --host 0.0.0.0 --port {{ $port }}
           resources:
             {{- $defaultValues := "{requests: {cpu: '4', memory: '4Gi'}, limits: {cpu: '4', memory: '16Gi'}}" -}}
             {{- include "manifest.getResource" (list $.filename $defaultValues $.Values) | nindent 12 }}
@@ -227,9 +227,7 @@ spec:
   template:
     metadata:
       {{- include "manifest.podLabels" (list .filename .) | nindent 6 }}
-      {{- include "manifest.tdx.annotations" (list .filename .) | nindent 6 }}
     spec:
-      {{- include "manifest.tdx.runtimeClassName" (list .filename .) | nindent 6 }}
       affinity:
         nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -283,7 +281,7 @@ spec:
                 {{- if .Values.balloons.enabled }}
                 export VLLM_CPU_OMP_THREADS_BIND=$(tr ' ' ',' < /sys/fs/cgroup/cpuset.cpus.effective)
                 {{- end }}
-                python3 -m vllm.entrypoints.openai.api_server --model {{ $modelName }} --dtype $VLLM_DTYPE --enforce_eager --download-dir /data --host 0.0.0.0 --port {{ $port }}
+                python3 -m vllm.entrypoints.openai.api_server --model {{ $modelName }} --dtype $VLLM_DTYPE --enforce_eager {{ if $trustRemoteCode }}--trust-remote-code {{ end }}--download-dir /data --host 0.0.0.0 --port {{ $port }}
           resources:
             {{- $defaultValues := "{requests: {cpu: '4', memory: '4Gi'}, limits: {cpu: '4', memory: '16Gi'}}" -}}
             {{- include "manifest.getResource" (list .filename $defaultValues .Values) | nindent 12 }}

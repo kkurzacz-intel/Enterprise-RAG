@@ -25,8 +25,17 @@ ferretdb:
     auth:
       password: "{{ FINGERPRINT_POSTGRES_PASSWORD }}"
 
+{# Resolve solution language: explicit value or auto-detect from LLM model name #}
+{% if solution_language is defined and solution_language != "auto" %}
+{%   set resolved_language = solution_language %}
+{% elif 'PLLuM' in llm_model or 'Bielik' in llm_model %}
+{%   set resolved_language = 'pl' %}
+{% else %}
+{%   set resolved_language = 'en' %}
+{% endif %}
+
 systemFingerprint:
-  templateLanguage: "{{ 'pl' if 'PLLuM' in llm_model else 'en' }}"
+  templateLanguage: "{{ resolved_language }}"
 
 {% if tdx.coco.enabled %}
   podAnnotations:
@@ -35,4 +44,12 @@ systemFingerprint:
 
 {% if fingerprint.additional_values is defined %}
 {{ fingerprint.additional_values | to_nice_yaml }}
+{% endif %}
+
+{% if (minimal_configuration is defined and minimal_configuration) and "cpu" in pipelines[0].samplePath %}
+minimalConfiguration: true
+minimalResources:
+  fingerprint-svc:
+    requests:
+      cpu: "50m"
 {% endif %}

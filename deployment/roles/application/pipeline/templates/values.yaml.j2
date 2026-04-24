@@ -20,16 +20,35 @@ common_registry: &repo {{ registry }}
 alternateTagging: {{ use_alternate_tagging }}
 {% endif %}
 
+{# Resolve solution language: explicit value or auto-detect from LLM model name #}
+{% if solution_language is defined and solution_language != "auto" %}
+{%   set resolved_language = solution_language %}
+{% elif 'PLLuM' in llm_model or 'Bielik' in llm_model %}
+{%   set resolved_language = 'pl' %}
+{% else %}
+{%   set resolved_language = 'en' %}
+{% endif %}
+
 llm_model: &cpu_model {{ llm_model }}
 llm_model_gaudi: &hpu_model {{ llm_model_gaudi }}
 embedding_model_name: &embedding_model_name {{ embedding_model_name }}
 reranking_model_name: &reranking_model_name {{ reranking_model_name }}
+ner_model_name: &ner_model_name "tanaos/tanaos-NER-v1"
 
 chat_history:
   enabled: {{ chat_history.enabled }}
 
 {% if hpaEnabled is defined %}
 hpaEnabled: {{ hpaEnabled }}
+{% endif %}
+
+{% if (minimal_configuration is defined and minimal_configuration) and "cpu" in item.samplePath %}
+resources:
+  requests:
+    cpu: "100m"
+    memory: "64Mi"
+  limits:
+    memory: "128Mi"
 {% endif %}
 
 {% if tdx is defined and tdx.coco is defined and tdx.coco.enabled %}
@@ -130,7 +149,7 @@ images:
     repository: *repo
     tag: *tag
     envs:
-      PROMPT_TEMPLATE_LANGUAGE: "{{ 'pl' if 'PLLuM' in llm_model else 'en' }}"
+      PROMPT_TEMPLATE_LANGUAGE: "{{ resolved_language }}"
   torchserve_embedding:
     image: "erag-torchserve_embedding"
     repository: *repo
@@ -158,6 +177,13 @@ images:
 {% endif %}
     envs:
       EMBEDDING_MODEL_NAME: *embedding_model_name
+      METADATA_LANGUAGE: "{{ resolved_language }}"
+{% if ner is defined and ner.enabled is defined and ner.enabled is true %}
+      METADATA_EXTRACTION_MODE: "hybrid"
+      NER_ENDPOINT: "http://retriever-ner-ovms-svc:9001"
+{% else %}
+      METADATA_EXTRACTION_MODE: "off"
+{% endif %}
 {% if edp.hierarchical_indices.enabled is true %}
       USE_HIERARCHICAL_INDICES: "True"
       K_SUMMARIES: {{ edp.hierarchical_indices.kSummaries }}
@@ -208,13 +234,21 @@ images:
     repository: *repo
     tag: *tag
     envs:
-      SYSTEM_FINGERPRINT_TEMPLATE_LANGUAGE: "{{ 'pl' if 'PLLuM' in llm_model else 'en' }}"
+      SYSTEM_FINGERPRINT_TEMPLATE_LANGUAGE: "{{ resolved_language }}"
   chat-history-usvc:
     image: "erag-chat-history"
     repository: *repo
     tag: *tag
   docsum-usvc:
     image: "erag-docsum"
+    repository: *repo
+    tag: *tag
+  query-rewrite-usvc:
+    image: "erag-query-rewrite"
+    repository: *repo
+    tag: *tag
+  vllm_query_rewrite:
+    image: "erag-vllm-cpu"
     repository: *repo
     tag: *tag
   init-container:
@@ -228,3 +262,13 @@ images:
     tag: *tag
     envs:
       EMBEDDING_MODEL_NAME: *embedding_model_name
+  ovms_ner:
+    image: "erag-ovms_ner"
+    repository: *repo
+    tag: *tag
+    pullPolicy: Always
+    envs:
+      NER_MODEL_NAME: *ner_model_name
+      NER_WEIGHT_FORMAT: "int8"
+      OVMS_INTERNAL_PORT: "9000"
+      GATEWAY_PORT: "9001"

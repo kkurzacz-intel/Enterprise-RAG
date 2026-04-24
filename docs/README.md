@@ -6,6 +6,9 @@ Welcome to the Intel® AI for Enterprise RAG documentation! This repository cont
 
 ### Deployment and Configuration
 
+- **[minimum_requirements.md](minimum_requirements.md)**
+  Minimum hardware requirements for deploying Intel® AI for Enterprise RAG, including the limited single-user deployment option (32 cores / 64 GB RAM).
+
 - **[cluster_deployment_guide.md](cluster_deployment_guide.md)**
   Step-by-step guide for deploying Kubernetes clusters for Intel® AI for Enterprise RAG with both single-node and multi-node configurations.
 
@@ -30,12 +33,18 @@ Welcome to the Intel® AI for Enterprise RAG documentation! This repository cont
 - **[building_images.md](building_images.md)**
   Guide for building Docker images locally for Intel® AI for Enterprise RAG components and pushing them to registries.
 
+- **[debug_tool.md](debug_tool.md)**
+  Guide for using the Intel® AI for Enterprise RAG Debug Tool to collect comprehensive diagnostic information from your Kubernetes cluster for troubleshooting deployment issues.
+
 
 
 ### Backup and Recovery
 
 - **[backup.md](backup.md)**
   Comprehensive guide for configuring backup functionality with Velero, creating backups, and restoring user data and configurations.
+
+- **[backup_storage_configuration.md](backup_storage_configuration.md)**
+  Instructions for configuring storage including external kind for backup functionality with Velero.
 
 ### Performance, Accuracy and Monitoring
 
@@ -53,11 +62,13 @@ Welcome to the Intel® AI for Enterprise RAG documentation! This repository cont
 - **[multifactor_authentication.md](multifactor_authentication.md)**
   Configuration guide for implementing multi-factor authentication in Intel® AI for Enterprise RAG systems.
 
-- **[single_sign_on_configuration_on_keycloak.md](single_sign_on_configuration_on_keycloak.md)**
-  Instructions for configuring Single Sign-On integration using Microsoft Entra ID with Keycloak for enterprise authentication.
-
 - **[ad_federation_on_keycloak.md](ad_federation_on_keycloak.md)**
-  Instructions for configuring Keycloak user federation using Microsoft Active Directory for enterprise authentication. 
+  Instructions for configuring Keycloak user federation using Microsoft Active Directory for enterprise authentication.
+
+### Integrations
+
+- **[sso_and_sharepoint_integration.md](sso_and_sharepoint_integration.md)**
+  Guide covering Single Sign-On configuration using Microsoft Entra ID with Keycloak, and SharePoint Online integration for document ingestion into the knowledge base.
 
 ### Service Mesh and Security
 

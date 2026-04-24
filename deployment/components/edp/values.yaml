@@ -29,6 +29,11 @@ bucketNameRegexFilter: '.*'
 presignedUrlCredentialsSystemFallback: "false"
 embedding_model_name: &embedding_model_name "BAAI/bge-base-en-v1.5"
 
+sharepointTenantId: ""
+sharepointClientId: ""
+sharepointClientSecret: ""
+keycloakBrokerIdpAlias: ""
+
 
 s3ApiDomain: &s3ApiDomain "s3.erag.com"
 uiBrowserDomain: &uiBrowserDomain "seaweedfs.erag.com"
@@ -86,6 +91,8 @@ seaweedfs:
       - value: "consoleAdmin"
         role: "arn:aws:iam::role/S3AdminRole"
       - value: "erag-admin-group"
+        role: "arn:aws:iam::role/S3UserRole"
+      - value: "erag-maintainer-group"
         role: "arn:aws:iam::role/S3UserRole"
       - value: "erag-user-group"
         role: "arn:aws:iam::role/S3ReadOnlyRole"
@@ -152,28 +159,9 @@ minio:
       - ports:
         - port: 15008
   ingress:
-    enabled: true
-    ingressClassName: "nginx"
-    hostname: *uiBrowserDomain
-    path: /
-    tls: true
-    extraTls:
-    - hosts:
-        - *uiBrowserDomain
-      secretName: tls-secret
+    enabled: false
   apiIngress:
-    enabled: true
-    ingressClassName: "nginx"
-    hostname: *s3ApiDomain
-    path: /
-    tls: true
-    extraTls:
-    - hosts:
-        - *s3ApiDomain
-    annotations:
-      nginx.ingress.kubernetes.io/enable-cors: "true"
-      nginx.ingress.kubernetes.io/cors-allow-origin: "*"
-      nginx.ingress.kubernetes.io/cors-allow-headers: "Access-Control-Allow-Origin,DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+    enabled: false
   # bitnami helm chart does not have direct mappings to minio's oidc helm config, therefore env variables are used
   # reference: https://min.io/docs/minio/linux/reference/minio-server/settings/iam/openid.html
   extraEnvVars:
@@ -319,14 +307,27 @@ postgresql:
     secretKey: "DATABASE_PASSWORD"
   resources:
     requests:
-      cpu: "1"
-      memory: "1Gi"
+      cpu: "100m"
+      memory: "200Mi"
     limits:
-      cpu: "2"
-      memory: "4Gi"
+      cpu: "512m"
+      memory: "2Gi"
   persistence:
     enabled: true
     size: "10Gi"
+
+# When minimalConfiguration is true, resource requests/limits for celery and
+# textExtractor are reduced to values suitable for a 32-core / 64 GB single-user
+# deployment. Set via edp.minimal_configuration: true in config.yaml.
+# Individual services.<name>.resources overrides still take priority.
+minimalConfiguration: false
+minimalResources:
+  edp-celery:
+    requests:
+      cpu: "100m"
+  edp-text-extractor:
+    requests:
+      cpu: "1"
 
 celery:
   nameOverride: "edp-celery"
@@ -352,6 +353,7 @@ celery:
     scheduledSync:
       enabled: false
       syncPeriodSeconds: "60"
+      sharepointSyncPeriodSeconds: "60"
   environment:
     - name: EDP_EXTERNAL_URL
       valueFrom:
@@ -488,14 +490,39 @@ celery:
         configMapKeyRef:
           name: edp-configmap
           key: CELERY_BATCH_SIZE
+    - name: SHAREPOINT_TENANT_ID
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: SHAREPOINT_TENANT_ID
+    - name: SHAREPOINT_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: SHAREPOINT_CLIENT_ID
+    - name: SHAREPOINT_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: SHAREPOINT_CLIENT_SECRET
+    - name: KEYCLOAK_BROKER_IDP_ALIAS
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: KEYCLOAK_BROKER_IDP_ALIAS
+    - name: EDP_OIDC_CONFIG_URL
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: EDP_OIDC_CONFIG_URL
 
   replicas: 1
   resources:
     requests:
-      cpu: "2"
+      cpu: "512m"
       memory: "4Gi"
     limits:
-      cpu: "4"
+      cpu: "2"
       memory: "8Gi"
 
 flower:
@@ -549,11 +576,11 @@ flower:
   replicas: 1
   resources:
     requests:
-      cpu: "1"
-      memory: "1Gi"
+      cpu: "50m"
+      memory: "64Mi"
     limits:
-      cpu: "2"
-      memory: "2Gi"
+      cpu: "512m"
+      memory: "1Gi"
 
 backend:
   postgresql:
@@ -685,6 +712,31 @@ backend:
         configMapKeyRef:
           name: edp-configmap
           key: USE_BEARER_TOKEN_AUTH
+    - name: SHAREPOINT_TENANT_ID
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: SHAREPOINT_TENANT_ID
+    - name: SHAREPOINT_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: SHAREPOINT_CLIENT_ID
+    - name: SHAREPOINT_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: SHAREPOINT_CLIENT_SECRET
+    - name: KEYCLOAK_BROKER_IDP_ALIAS
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: KEYCLOAK_BROKER_IDP_ALIAS
+    - name: EDP_OIDC_CONFIG_URL
+      valueFrom:
+        secretKeyRef:
+          name: edp-access-secret
+          key: EDP_OIDC_CONFIG_URL
   config:
     opeaLoggerLevel: "INFO" # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     rbac:
@@ -703,10 +755,10 @@ backend:
   replicas: 1
   resources:
     requests:
-      cpu: "2"
-      memory: "2Gi"
+      cpu: "100m"
+      memory: "512Mi"
     limits:
-      cpu: "2"
+      cpu: "1"
       memory: "2Gi"
 
 hierarchicalDataprep:
@@ -813,24 +865,23 @@ textExtractor:
   replicas: 1
   environment:
     - name: OMP_NUM_THREADS
-      valueFrom:
-        resourceFieldRef:
-          resource: limits.cpu
-    - name: PDF_MAX_WORKERS
+      value: "1"
+    - name: TEXT_EXTRACTOR_MAX_WORKERS
       valueFrom:
         resourceFieldRef:
           resource: limits.cpu
   resources:
     requests:
-      cpu: "2"
+      cpu: "4"
       memory: "8Gi"
     limits:
       cpu: "12"
-      memory: "40Gi"
+      memory: "30Gi"
   hpa:
     minReplicas: 1
     maxReplicas: 2
-    targetValue: 4
+    scaleUpTargetValue: 2
+    scaleDownTargetValue: "500m"
     behavior:
       scaleDown:
         stabilizationWindowSeconds: 600
@@ -865,10 +916,10 @@ textCompression:
     default_text_compression_methods: "header_footer_stripper"
   resources:
     requests:
-      cpu: "0.5"
+      cpu: "0.1"
       memory: "64Mi"
     limits:
-      cpu: "2"
+      cpu: "512m"
       memory: "1Gi"
   hpa:
     minReplicas: 1
@@ -916,7 +967,7 @@ textSplitter:
     late_chunk_overlap: "1024"
   resources:
     requests:
-      cpu: "1"
+      cpu: "100m"
       memory: "512Mi"
     limits:
       cpu: "2"
@@ -971,6 +1022,8 @@ embedding:
     modelName: "BAAI/bge-base-en-v1.5"
     modelServer: "torchserve"
     modelServerEndpoint: "http://torchserve-embedding-svc.chatqa.svc:8090"
+    timeout: "120"
+    opeaLoggerLevel: "INFO"
   nameOverride: "edp-embedding"
   name: "erag-embedding"
   repository: "docker.io/opea"
@@ -994,8 +1047,8 @@ ingestion:
     opeaLoggerLevel: "INFO" # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     embedding_model_name: *embedding_model_name # e.g., "BAAI/bge-base-en-v1.5"
     # Vector Algorithm configuration
-    vector_algorithm: "FLAT" # "FLAT", "HNSW"
-    vector_dims: "768" # Depends on model used in embedding. For example bge-large-en-v1.5=768, bge-large-en-v1.5=1024
+    vector_algorithm: "FLAT" # "FLAT", "HNSW", "SVS-VAMANA"
+    vector_dims: "768" # Auto-detected from embedding_model_name by resolve_vector_dims.py; kept here as Helm chart default only
     vector_datatype: "FLOAT32" # FLOAT16, FLOAT32, FLOAT64
     vector_distance_metric: "COSINE" # L2, IP, COSINE
     # For HNSW Algorithm additional settings are available
@@ -1009,17 +1062,17 @@ ingestion:
   replicas: 1
   resources:
     requests:
-      cpu: "1"
-      memory: "2Gi"
+      cpu: "100m"
+      memory: "512Mi"
     limits:
-      cpu: "4"
-      memory: "4Gi"
+      cpu: "2"
+      memory: "2Gi"
 
 vllm:
   enabled: false
   config:
     modelName: "Intel/neural-chat-7b-v3-3"
-    cpuKvcacheSpace: "40"
+    cpuKvcacheSpace: "10"
     dtype: "bfloat16"
     maxNumSeqs: "256"
     skipWarmup: "true"

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ARG python_version=3.11
-ARG python_image_version=${python_version}-slim-bookworm
+ARG python_image_version=${python_version}-slim-trixie
 
 FROM python:${python_image_version}
 COPY --from=ghcr.io/astral-sh/uv:0.9.1 /uv /uvx /bin/
@@ -11,11 +11,8 @@ ARG python_version
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends --fix-missing \
-    libgl1-mesa-glx \
+    libgl1 \
     libjemalloc-dev && \
-    apt-get install -y --only-upgrade \
-      openssl=3.0.18-1~deb12u2 \
-      libssl3=3.0.18-1~deb12u2 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apk/* && \
     rm -f /usr/bin/dmesg /usr/bin/base64 /usr/bin/perl && \
@@ -35,7 +32,7 @@ COPY ./comps/docsum/impl/microservice/uv.lock uv.lock
 
 # --locked will fail when any changes in pyproject.toml were introduced
 # Source: https://github.com/astral-sh/uv/blob/main/docs/concepts/projects/sync.md#checking-if-the-lockfile-is-up-to-date
-RUN uv sync --locked --no-cache && \
+RUN uv sync --locked --no-cache --group security-overrides && \
     find .venv -name "*.pyc" -delete && \
     find .venv -name "__pycache__" -type d -exec rm -rf {} + || true && \
     rm uv.lock pyproject.toml

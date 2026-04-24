@@ -14,8 +14,16 @@ apisix:
       apisix:
         serviceName: auth-apisix-admin
         serviceNamespace: auth-apisix
-    image:
-      tag: "1.8.4"
+      kubernetes:
+        enableGatewayAPI: true
+    gatewayProxy:
+      createDefault: true
+      provider:
+        type: ControlPlane
+        controlPlane:
+          service:
+            name: auth-apisix-admin
+            port: 9180
   # Disable built-in etcd subchart (we deploy our own via templates/etcd.yaml)
   etcd:
     enabled: false
@@ -38,13 +46,6 @@ apisix:
             sleep 3
           done
           echo "etcd is ready!"
-  extraEnvVars:
-    - name: CLIENT_SECRET
-      valueFrom:
-        secretKeyRef:
-          name: apisix-secret
-          key: CLIENT_SECRET
-
   apisix:
     nginx:
       configurationSnippet:

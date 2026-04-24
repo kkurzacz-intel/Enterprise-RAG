@@ -2,10 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+from typing import Optional
+
 from comps.cores.proto.docarray import EmbedDoc, SearchedDoc
 from comps.vectorstores.utils.opea_vectorstore import OPEAVectorStore
 from comps.cores.mega.logger import get_opea_logger, change_opea_logger_level
 from comps.vectorstores.utils.opea_rbac import retrieve_bucket_list
+from comps.retrievers.utils.query_metadata_parser import QueryMetadataParser
+from comps.retrievers.utils.query_metadata_parser import EXTRACTION_MODE_OFF
+from comps.retrievers.utils.models import QueryAnalysisResult
 
 logger = get_opea_logger(f"{__file__.split('comps/')[1].split('/', 1)[0]}")
 change_opea_logger_level(logger, log_level=os.getenv("OPEA_LOGGER_LEVEL", "INFO"))
@@ -27,14 +32,45 @@ class OPEARetriever:
         self.vector_store = OPEAVectorStore(vector_store)
         self.rbac_enabled = rbac_enabled
 
+        # Initialize query metadata parser for metadata-aware filtering
+        extraction_mode = os.getenv("METADATA_EXTRACTION_MODE", EXTRACTION_MODE_OFF).lower()
+        self._query_parsing_enabled = extraction_mode != EXTRACTION_MODE_OFF
+
+        try:
+            redis_connector = getattr(self.vector_store, 'vector_store', None)
+            self._query_parser = QueryMetadataParser.from_env(
+                redis_connector=redis_connector
+            )
+            if self._query_parsing_enabled:
+                logger.info(f"Query metadata parsing enabled (mode: {extraction_mode})")
+            else:
+                logger.info("Query metadata parsing default: off (per-request overrides still honoured)")
+        except Exception as e:
+            logger.warning(f"Failed to initialize query parser, disabling: {e}")
+            self._query_parser = None
+
     def filter_expression_from_rbac_by(self, rbac_by: dict = None):
-        if rbac_by is not None and 'bucket_names' in rbac_by: # bucket_names can be empty meaning no access
+        if rbac_by is None:
+            return None
+
+        bucket_filter = None
+        site_filter = None
+
+        if 'bucket_names' in rbac_by:
             try:
-                return self.vector_store.get_bucket_name_filter_expression(bucket_names=rbac_by['bucket_names'])
+                bucket_filter = self.vector_store.get_bucket_name_filter_expression(bucket_names=rbac_by['bucket_names'])
             except ValueError:
                 logger.warning("No access due rbac with empty bucket_names value")
-                return None
-        return None
+
+        if 'site_names' in rbac_by:
+            try:
+                site_filter = self.vector_store.get_site_name_filter_expression(site_names=rbac_by['site_names'])
+            except ValueError:
+                logger.debug("No SharePoint site names in RBAC filter")
+
+        if bucket_filter and site_filter:
+            return bucket_filter | site_filter
+        return bucket_filter or site_filter
 
     def filter_expression_from_search_by(self, search_by: dict = {}):
         logger.debug(f"Generating filter expression from search_by: {search_by}")
@@ -113,18 +149,40 @@ class OPEARetriever:
                 new_filter_expression = (filter_expression & additional_expression) | filter_links_expression
             else:
                 new_filter_expression = additional_expression | filter_links_expression # additional filter or links
-        
+
         logger.debug(f"Generated filter expression for hierarchical retrieval: {str(new_filter_expression)}")
         return new_filter_expression
 
-    async def retrieve(self, input: EmbedDoc, search_by: dict = None, rbac_by: dict = None) -> SearchedDoc:
-        filter_expression = self.filter_expression_from_search_by(search_by=search_by)
+    async def retrieve(
+        self,
+        input: EmbedDoc,
+        search_by: dict = None,
+        rbac_by: dict = None,
+        metadata_filter: Optional[object] = None
+    ) -> SearchedDoc:
+        """Retrieve documents matching the query, combining search/RBAC/metadata filters."""
+        # Combine search_by filter with metadata filter
+        search_filter = self.filter_expression_from_search_by(search_by=search_by)
+        combined_filter = self.combine_filter_expressions(search_filter, metadata_filter)
+
         rbac_filter_expression = self.filter_expression_from_rbac_by(rbac_by=rbac_by)
-        retrieve_filter_expression = self.generate_retrieve_filter_expression(filter_expression, rbac_filter_expression)
+        retrieve_filter_expression = self.generate_retrieve_filter_expression(combined_filter, rbac_filter_expression)
         return await self.vector_store.search(input=input, filter_expression=retrieve_filter_expression)
 
-    async def hierarchical_retrieve(self, input: EmbedDoc, k_summaries: int, k_chunks: int, search_by: dict = None, rbac_by: dict = None) -> SearchedDoc:
-        filter_expression = self.filter_expression_from_search_by(search_by=search_by)
+    async def hierarchical_retrieve(
+        self,
+        input: EmbedDoc,
+        k_summaries: int,
+        k_chunks: int,
+        search_by: dict = None,
+        rbac_by: dict = None,
+        metadata_filter: Optional[object] = None
+    ) -> SearchedDoc:
+        """Hierarchical retrieval: summary-then-chunk with combined filters."""
+        # Combine search_by filter with metadata filter
+        search_filter = self.filter_expression_from_search_by(search_by=search_by)
+        filter_expression = self.combine_filter_expressions(search_filter, metadata_filter)
+
         rbac_filter_expression = self.filter_expression_from_rbac_by(rbac_by=rbac_by)
 
         # Fetch summaries using filter expression
@@ -162,9 +220,65 @@ class OPEARetriever:
 
     def generate_rbac(self, auth_header: str = "") -> dict:
         try:
-            items = retrieve_bucket_list(auth_header)
-            items = items['buckets'] if items and 'buckets' in items else []
-            return { 'bucket_names': items }
+            result = retrieve_bucket_list(auth_header)
+            bucket_names = result.get('buckets', []) if result else []
+            site_names = result.get('sites', []) if result else []
+            return { 'bucket_names': bucket_names, 'site_names': site_names }
         except ValueError as e:
             logger.error(f"Returning empty list of buckets due to RBAC request error: {e}")
-            return { 'bucket_names': [] }
+            return { 'bucket_names': [], 'site_names': [] }
+
+    async def analyze_query(self, query: str, metadata_extraction_mode: Optional[str] = None) -> Optional[QueryAnalysisResult]:
+        """Parse query to extract metadata constraints and build filter expressions.
+
+        Per-request metadata_extraction_mode overrides the server default.
+        If the server default is 'off' but the request sends 'regex_only', filtering runs.
+        """
+        # Skip if no parser available (init failed)
+        if self._query_parser is None:
+            return None
+
+        # Skip if server default is off AND no per-request override
+        if not self._query_parsing_enabled and not metadata_extraction_mode:
+            return None
+
+        # Skip if per-request mode is explicitly "off"
+        if metadata_extraction_mode and metadata_extraction_mode.lower().strip() == EXTRACTION_MODE_OFF:
+            return None
+
+        try:
+            result = await self._query_parser.parse(query, extraction_mode=metadata_extraction_mode)
+            if result.has_filters:
+                logger.info(
+                    f"Query analysis extracted {result.extraction_count} metadata constraints "
+                    f"in {result.latency_ms:.2f}ms"
+                )
+            return result
+        except Exception as e:
+            logger.warning(f"Query analysis failed, continuing without metadata filter: {e}")
+            return None
+
+    def filter_expression_from_query_analysis(
+        self,
+        query_analysis: Optional[QueryAnalysisResult]
+    ) -> Optional[object]:
+        """Extract filter expression from query analysis result (None if no constraints)."""
+        if query_analysis is None or not query_analysis.has_filters:
+            return None
+        return query_analysis.filter_expression
+
+    def combine_filter_expressions(
+        self,
+        search_filter: Optional[object],
+        metadata_filter: Optional[object]
+    ) -> Optional[object]:
+        """Combine search_by and metadata filters with AND logic."""
+        if search_filter is None and metadata_filter is None:
+            return None
+        if search_filter is None:
+            return metadata_filter
+        if metadata_filter is None:
+            return search_filter
+
+        # Combine with AND
+        return search_filter & metadata_filter

@@ -258,6 +258,7 @@ class RetrieverParams(Document):
     fetch_k: PositiveInt = 20
     lambda_mult: NonNegativeFloat = 0.5
     score_threshold: NonNegativeFloat = 0.2
+    metadata_extraction_mode: str = "off"
 
 class RerankerParams(Document):
     top_n: PositiveInt = 3
@@ -273,10 +274,16 @@ class LLMParams(Document):
     stream: bool = True
 
 
+class QueryRewriteParams(Document):
+    max_new_tokens: int = 256
+    temperature: float = 0.1
+
+
 class PackedParams(Document):
     llm: LLMParams = None
     retriever: RetrieverParams = None
     reranker: RerankerParams = None
+    query_rewrite: Optional[QueryRewriteParams] = None
     input_guard: LLMGuardInputGuardrailParams = None
     output_guard: LLMGuardOutputGuardrailParams = None
     dataprep_guard: LLMGuardDataprepGuardrailParams = None

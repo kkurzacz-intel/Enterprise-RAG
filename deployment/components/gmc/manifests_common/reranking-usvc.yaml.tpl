@@ -62,9 +62,7 @@ spec:
   template:
     metadata:
       {{- include "manifest.podLabels" (list .filename .) | nindent 6 }}
-      {{- include "manifest.tdx.annotations" (list .filename .) | nindent 6 }}
     spec:
-      {{- include "manifest.tdx.runtimeClassName" (list .filename .) | nindent 6 }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       serviceAccountName: reranking-usvc
@@ -73,16 +71,35 @@ spec:
           image: alpine/curl
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: reranking-usvc-config
+            - configMapRef:
+                name: extra-env-config
+                optional: true
           command:
             - sh
             - -c
             - |
                 if [ -z "$RERANKING_SERVICE_ENDPOINT" ]; then
                   echo "Environment variable RERANKING_SERVICE_ENDPOINT is not set. Skipping the init container.";
+                elif [ -z "$RERANKING_MODEL_NAME" ]; then
+                  echo "Environment variable RERANKING_MODEL_NAME is not set. Skipping torchserve check.";
+                elif [ "$RERANKING_MODEL_SERVER" = "torchserve" ]; then
+                  MODEL_NAME=$(basename "${RERANKING_MODEL_NAME}")
+                  PREDICTIONS_ENDPOINT="${RERANKING_SERVICE_ENDPOINT}/predictions/${MODEL_NAME}"
+                  echo "Waiting for torchserve reranking server at ${PREDICTIONS_ENDPOINT}...";
+                  until curl -sf -X POST "${PREDICTIONS_ENDPOINT}" \
+                    -H "Content-Type: application/json" \
+                    -d '{"query": "readiness check", "texts": ["test document"]}' \
+                    | grep -q '\['; do
+                    echo "waiting for torchserve reranking server ${PREDICTIONS_ENDPOINT} to be ready...";
+                    sleep 5;
+                  done;
                 else
-                  until curl -s $RERANKING_SERVICE_ENDPOINT; do
+                  until curl -sf "${RERANKING_SERVICE_ENDPOINT}/health"; do
                     echo "waiting for reranking server $RERANKING_SERVICE_ENDPOINT to be ready...";
-                    sleep 2;
+                    sleep 5;
                   done;
                 fi;
       {{- include "gmc.imagePullSecrets" . }}
@@ -116,12 +133,15 @@ spec:
               port: reranking-usvc
             initialDelaySeconds: 5
             periodSeconds: 60
+            timeoutSeconds: 10
           readinessProbe:
+            failureThreshold: 5
             httpGet:
               path: v1/health_check
               port: reranking-usvc
             initialDelaySeconds: 5
             periodSeconds: 60
+            timeoutSeconds: 10
           startupProbe:
             failureThreshold: 120
             httpGet:
@@ -129,6 +149,7 @@ spec:
               port: reranking-usvc
             initialDelaySeconds: 5
             periodSeconds: 60
+            timeoutSeconds: 10
           resources:
             {{- $defaultValues := "{requests: {cpu: '1', memory: '2Gi'}, limits: {cpu: '4', memory: '2Gi'}}" -}}
             {{- include "manifest.getResource" (list .filename $defaultValues .Values) | nindent 12 }}

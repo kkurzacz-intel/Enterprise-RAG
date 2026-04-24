@@ -20,9 +20,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- include "manifest.podLabels" (list .Values.celery.nameOverride .) | nindent 6 }}
-      {{- include "manifest.tdx.annotations" (list .Values.celery.nameOverride .) | nindent 6 }}
     spec:
-      {{- include "manifest.tdx.runtimeClassName" (list .Values.celery.nameOverride .) | nindent 6 }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -130,6 +128,8 @@ spec:
           {{- if .Values.celery.config.scheduledSync.enabled }}
             - name: EDP_SYNC_TASK_TIME_SECONDS
               value: {{ .Values.celery.config.scheduledSync.syncPeriodSeconds | quote }}
+            - name: EDP_SP_SYNC_TASK_TIME_SECONDS
+              value: {{ .Values.celery.config.scheduledSync.sharepointSyncPeriodSeconds | default .Values.celery.config.scheduledSync.syncPeriodSeconds | quote }}
           {{- end }}
             - name: OPEA_LOGGER_LEVEL
               value: {{ .Values.celery.config.opeaLoggerLevel | quote }}
@@ -138,6 +138,11 @@ spec:
                 configMapKeyRef:
                   name: edp-configmap
                   key: MAX_NEW_WORKERS
+            - name: EMBEDDING_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: edp-configmap
+                  key: EMBEDDING_TIMEOUT_SECONDS
           {{- toYaml .Values.celery.environment | nindent 12 }}
           ports:
             - name: http

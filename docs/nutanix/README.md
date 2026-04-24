@@ -163,6 +163,12 @@ chmod 700 get_helm.sh
 
 2. For AWS EKS follow [NAI EKS Deployment](NUTANIX-AI-EKS.md)
 
+> [!WARNING]
+> When deploying Nutanix Enterprise AI alongside Intel® AI for Enterprise RAG, **skip the Prometheus stack installation** step in the NAI EKS guide. The telemetry components of both products collide. Instead, pass the following flag during NAI Core installation to reuse the existing eRAG Prometheus instance:
+> ```
+> --set naiApi.naiMonitoringUrl=http://telemetry-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+> ```
+
 ## 3. Configure the Pipeline
 ### Configure External LLM Endpoint 
 
@@ -194,11 +200,13 @@ Change pipeline file in inventory's `config.yaml` to use file, that you have rec
 ```yaml
 pipelines:
   - namespace: chatqa
-     samplePath: chatqa/reference-external-endpoint.yaml
-     resourcesPath: chatqa/resources-reference-external-endpoint.yaml
-     modelConfigPath: chatqa/resources-model-cpu.yaml
-     type: chatqa
+    samplePath: chatqa/reference-external-endpoint.yaml
+    resourcesPath: chatqa/resources-reference-external-endpoint.yaml
+    modelConfigPath: chatqa/resources-model-cpu.yaml
+    type: chatqa
  ```
+> [!NOTE] 
+> If application will be deployed behind the proxy user should adjust additionalNoProxy value in `config.yaml` accordingly.
 
  Additionally, if eRAG and NAI are on the same cluster, balloons needs to be configured:
 ```yaml

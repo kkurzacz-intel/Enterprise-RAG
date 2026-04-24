@@ -5,15 +5,16 @@
 edp:
   enabled: false
   namespace: "edp"
+  # Path prefixes: set dynamically by solution_config.yaml when routing_mode == "path"
+  # Default values used in path mode:
+  defaultS3PathPrefix: "/s3"
+  defaultSeaweedfsPathPrefix: "/seaweedfs"
   helm:
     version: "{{ helm_version }}"
-    repo_name: "bitnami"
-    repo_url: "https://charts.bitnami.com/bitnami"
     chart_name: "edp"
     chart_version: "1.1.0"
     release_name: "edp"
     default_values_file: "{{ playbook_dir }}/../components/edp/values.yaml"
-    tdx_resources_file: "{{ playbook_dir }}/../components/edp/resources-tdx.yaml"
     chart_directory: "{{ playbook_dir }}/../components/edp"
 
   client_id: "EnterpriseRAG-oidc-minio"
@@ -97,3 +98,8 @@ edp:
   late_chunking:
     # NOTE: If enabled, embedding_model_name must be 'jinaai/jina-embeddings-v2-base-en' for late chunking to work.
     enabled: false
+
+  scheduledSync:
+    enabled: false
+    syncPeriodSeconds: "60"
+    sharepointSyncPeriodSeconds: "60"

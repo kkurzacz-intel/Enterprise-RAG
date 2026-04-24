@@ -25,10 +25,14 @@ common_registry: &repo "docker.io/opea"
 llm_model: &cpu_model "casperhansen/llama-3-8b-instruct-awq"
 llm_model_gaudi: &hpu_model "mistralai/Mixtral-8x7B-Instruct-v0.1"
 
+# Query Rewrite model
+query_rewrite_model: &query_rewrite_model "AMead10/Llama-3.2-3B-Instruct-AWQ"
+
 embedding_model_name: &embedding_model_name "BAAI/bge-base-en-v1.5"
-# embedding_model_name: &embedding_model_name "BAAI/bge-large-en-v1.5"
 
 reranking_model_name: &reranking_model_name "BAAI/bge-reranker-base"
+
+ner_model_name: &ner_model_name "tanaos/tanaos-NER-v1"
 
 # imagePullSecrets:
 #   - name: regcred
@@ -124,6 +128,10 @@ pvc:
     name: model-volume-reranker
     accessMode: ReadWriteOnce
     storage: 10Gi
+  modelNer:
+    name: model-volume-ner
+    accessMode: ReadWriteOnce
+    storage: 1Gi
 
 images:
   gmcManager:
@@ -161,6 +169,8 @@ images:
     pullPolicy: Always
     envs:
       EMBEDDING_MODEL_NAME: *embedding_model_name
+      EMBEDDING_TIMEOUT_SECONDS: "120"
+      OPEA_LOGGER_LEVEL: "INFO"
   reranking-usvc:
     image: "erag-reranking"
     repository: *repo
@@ -227,6 +237,16 @@ images:
     envfile: "src/comps/retrievers/impl/microservice/.env"
     envs:
       EMBEDDING_MODEL_NAME: *embedding_model_name
+  ovms_ner:
+    image: "erag-ovms_ner"
+    repository: *repo
+    tag: *tag
+    pullPolicy: Always
+    envs:
+      NER_MODEL_NAME: *ner_model_name
+      NER_WEIGHT_FORMAT: "int8"
+      OVMS_INTERNAL_PORT: "9000"
+      GATEWAY_PORT: "9001"
   ingestion-usvc:
     image: "erag-ingestion"
     repository: *repo
@@ -268,6 +288,13 @@ images:
     pullPolicy: Always
     envs:
       LLM_VLLM_MODEL_NAME: *cpu_model
+  vllm_query_rewrite:
+    image: "erag-vllm-cpu"
+    repository: *repo
+    tag: *tag
+    pullPolicy: Always
+    envs:
+      LLM_VLLM_MODEL_NAME: *query_rewrite_model
   langdtct-usvc:
     image: "erag-language-detection"
     repository: *repo
@@ -285,6 +312,12 @@ images:
     tag: *tag
     pullPolicy: Always
     envfile: "src/comps/docsum/impl/microservice/.env"
+  query-rewrite-usvc:
+    image: "erag-query-rewrite"
+    repository: *repo
+    tag: *tag
+    pullPolicy: Always
+    envfile: "src/comps/query_rewrite/impl/microservice/.env"
   init-container:
     image: "erag-init-container"
     repository: *repo

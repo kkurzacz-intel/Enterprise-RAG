@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ARG python_version=3.11
-ARG python_image_version=${python_version}-slim-bookworm
+ARG python_image_version=${python_version}-slim-trixie
 
 FROM python:${python_image_version}
 COPY --from=ghcr.io/astral-sh/uv:0.8.0 /uv /uvx /bin/
@@ -12,9 +12,6 @@ ARG python_version
 
 RUN apt-get -y update && \
     apt-get install --no-install-recommends --fix-missing -y nano git && \
-    apt-get install -y --only-upgrade \
-      openssl=3.0.18-1~deb12u2 \
-      libssl3=3.0.18-1~deb12u2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ARG ACCEPT_MSSQL_EULA=Y
@@ -43,7 +40,7 @@ COPY --chown=user:user ./comps/vectorstores/impl/requirements/pyproject.toml ../
 
 # --locked will fail when any changes in pyproject.toml were introduced
 # Source: https://github.com/astral-sh/uv/blob/main/docs/concepts/projects/sync.md#checking-if-the-lockfile-is-up-to-date
-RUN uv sync --locked --no-cache
+RUN uv sync --locked --no-cache --group security-overrides
 ENV PATH="/home/user/comps/ingestion/impl/microservice/.venv/bin:$PATH"
 
 WORKDIR /home/user
@@ -55,10 +52,6 @@ COPY --chown=user:user ./comps/ingestion/impl/microservice/.env ./comps/ingestio
 COPY --chown=user:user ./comps/ingestion/opea_ingestion_microservice.py ./comps/ingestion/opea_ingestion_microservice.py
 
 WORKDIR /home/user/comps/ingestion/impl/microservice/.venv/lib/python3.11/site-packages
-COPY --chown=user:user ./comps/vectorstores/impl/issue-346-20250603_160239.patch /tmp/issue-346-20250603_160239.patch
-RUN git apply /tmp/issue-346-20250603_160239.patch
-COPY --chown=user:user ./comps/vectorstores/impl/issue-346-custom.patch /tmp/issue-346-custom.patch
-RUN git apply /tmp/issue-346-custom.patch
 
 WORKDIR /home/user/comps/ingestion
 CMD ["python", "opea_ingestion_microservice.py"]

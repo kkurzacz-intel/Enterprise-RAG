@@ -95,9 +95,6 @@ Generic pod label definition
 {{- $context := index . 1 -}}
 labels:
   {{- include "manifest.selectorLabels" (list $deploymentName $context) | nindent 2 }}
-{{- if $context.Values.tdx }}
-  {{- include "manifest.tdx.labels" (list $deploymentName $context) | nindent 2 }}
-{{- end }}
 {{- end }}
 
 
@@ -150,14 +147,7 @@ Helper for adding environment variables and env files
   {{- $defaultValues = index $values "services" $filename "resources" }}
 {{- end -}}
 
-{{- $isTDXEnabled := hasKey $values "tdx" -}}
-{{- $isGaudiService := regexMatch "(?i)gaudi" $filename -}}
-
-{{- if and $isTDXEnabled (not $isGaudiService) }}
-  {{- include "manifest.tdx.getResourceValues" (dict "defaultValues" $defaultValues "filename" $filename "values" $values) }}
-{{- else }}
-  {{- $defaultValues | toYaml }}
-{{- end -}}
+{{- $defaultValues | toYaml }}
 {{- end -}}
 
 {{- /*
@@ -182,6 +172,22 @@ Helper for adding environment variables and env files
 {{- else -}}
 {{- printf "%s/%s:%s" (index $values "images" $filename "repository") (index $values "images" $filename "image") (index $values "images" $filename "tag") -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Exec probe command for TorchServe reranking readiness/startup checks.
+Performs a real inference request to confirm the model is loaded and serving.
+Usage: command: {{- include "manifest.torchserve.probeInferenceCmd" . | nindent <depth> }}
+*/}}
+{{- define "manifest.torchserve.probeInferenceCmd" -}}
+- /bin/sh
+- -c
+- |
+  MODEL_NAME=$(basename "${TORCHSERVE_MODEL_NAME}")
+  curl -sf http://localhost:8090/predictions/${MODEL_NAME} \
+    -H "Content-Type: application/json" \
+    -d '{"query": "readiness check", "texts": ["test document"]}' \
+    | grep -q '\['
 {{- end -}}
 
 {{/*

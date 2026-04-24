@@ -65,7 +65,8 @@ Document Summarization's pipeline architecture is available [here](./docs/images
      - [Install infrastructure components (storage, operators, backup tools)](#install-infrastructure-components-storage-operators-backup-tools)
      - [Deploy the Intel® AI for Enterprise RAG application on top of the prepared infrastructure](#deploy-the-intel-ai-for-enterprise-rag-application-on-top-of-the-prepared-infrastructure)
 4. [Intel AI Enterprise RAG Deployment - Partner Solutions](#intel-ai-enterprise-rag-deployment---partner-solutions)
-   - [Nutanix AI & Intel® AI for Enterprise RAG](#nutanix-ai--intel-ai-for-enterprise-rag)
+   - [Nutanix Enterprise AI & Intel® AI for Enterprise RAG](#nutanix-enterprise-ai--intel-ai-for-enterprise-rag)
+   - [VMware & Intel® AI for Enterprise RAG](#vmware--intel-ai-for-enterprise-rag)
 5. [Documentation](#documentation)
 6. [Support](#support)
 7. [Publications](#publications)
@@ -100,9 +101,13 @@ These are minimal requirements to run Intel® AI for Enterprise RAG with default
 
 ### Deployment on Xeon only
 To deploy the solution using Xeon only, you will need access to any platform with Intel® Xeon® Scalable processor that meet below requirements:
--  **logical cores**: A minimum of `88` logical cores
--  **RAM memory**: A minimum of `250GB` of RAM
+-  **logical cores**: A minimum of `60` logical cores
+-  **RAM memory**: A minimum of `128GB` of RAM
 -  **Disk Space**: `200GB` of disk space is generally recommended, though this is highly dependent on the model size
+
+> [!NOTE]
+> A limited single-user deployment is also possible on **32 logical cores / 64 GB RAM**.
+> See [docs/minimum_requirements.md](docs/minimum_requirements.md) for the required configuration changes.
 
 > [!NOTE]
 > By default, Intel® AI for Enterprise RAG uses the NRI plugin for performance optimization. For more info: [NRI plugin](deployment/components/nri-plugin/README.md)
@@ -112,10 +117,10 @@ To deploy the solution using Xeon only, you will need access to any platform wit
 To deploy the solution on a platform with Gaudi® AI Accelerator you need to have access to instance with minimal requirements:
 
 -  **logical cores**: A minimum of `56` logical cores
--  **RAM memory**: A minimum of `250GB` of RAM though this is highly dependent on database size
+-  **RAM memory**: A minimum of `128GB` of RAM though this is highly dependent on database size
 -  **Disk Space**: `500GB` of disk space is generally recommended, though this is highly dependent on the model size and database size
 -  **Gaudi cards**: `8`
--  **Gaudi driver**: `1.22.2`
+-  **Gaudi driver**: `1.23.0`
 
 # Getting Started
 
@@ -166,9 +171,13 @@ Once you have a K8s cluster with all infrastructure components installed, you ca
 
 # Intel AI Enterprise RAG Deployment - Partner Solutions
 
-## Nutanix AI & Intel® AI for Enterprise RAG
+## Nutanix Enterprise AI & Intel® AI for Enterprise RAG
 
-Follow documentation to deploy Nutanix AI with Intel® AI for Enterprise RAG using the [Nutanix AI Deployment Guide](docs/nutanix/README.md).
+[Nutanix Enterprise AI Deployment Guide](docs/nutanix/README.md).
+
+## VMware & Intel® AI for Enterprise RAG
+
+[VMware Deployment Guide](docs/VMware/README.md).
 
 # Documentation
 
@@ -181,6 +190,7 @@ Submit questions, feature requests, and bug reports on the GitHub Issues page.
 # Publications
 
 Feel free to checkout articles about Intel® AI for Enterprise RAG:
+* [Lenovo Validated Design: AI POD Mini for Enterprise RAG Implementation](https://lenovopress.lenovo.com/lp2417-lenovo-validated-design-ai-pod-mini-for-enterprise-rag-implementation)
 * [Give Your RAG a Voice: Building an Audio Q&A Experience with Intel® AI for Enterprise RAG](https://community.intel.com/t5/Blogs/Tech-Innovation/Artificial-Intelligence-AI/Give-Your-RAG-a-Voice-Building-an-Audio-Q-A-Experience-with/post/1739148)
 * [Accelerate AI Value Creation with Nutanix and Intel® AI for Enterprise RAG](https://www.youtube.com/watch?v=7ghQiKXrzew)
 * [Converging Paradigms: Architecting a Hybrid and Open Platform for Unified HPC and AI Workloads](https://www.intel.com/content/www/us/en/content-details/913576/converging-paradigms-architecting-a-hybrid-and-open-platform-for-unified-hpc-and-ai-workloads.html)

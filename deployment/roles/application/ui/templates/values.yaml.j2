@@ -16,17 +16,28 @@ tlsSecret: &tsecret {{ ui.tls.secret_name }}
 
 extraUiConfigVars:
   keycloakDomainName: "{{ keycloak.domainName }}"
+{% if keycloak.pathPrefix is defined %}
+  keycloakPathPrefix: "{{ keycloak.pathPrefix }}"
+{% endif %}
   keycloakRealm: "{{ ui.extraUiConfigVars.keycloakRealm }}"
   keycloakClientId: "{{ ui.extraUiConfigVars.keycloakClientId }}"
   adminResourceRole: "{{ ui.extraUiConfigVars.adminResourceRole }}"
+  maintainerResourceRole: "{{ ui.extraUiConfigVars.maintainerResourceRole }}"
   grafanaDomainName: "{{ telemetry.domainName }}"
+{% if telemetry.pathPrefix is defined %}
+  grafanaPathPrefix: "{{ telemetry.pathPrefix }}"
+{% endif %}
   keycloakAdminPanelDomainName: "{{ keycloak.domainName }}"
   s3DomainName: "{{ edp.minio.apiDomainName }}"
+{% if edp.s3PathPrefix is defined %}
+  s3PathPrefix: "{{ edp.s3PathPrefix }}"
+{% endif %}
   chatDisclaimerText: "{{ ui.extraUiConfigVars.chatDisclaimerText }}"
   chatMaintenanceMode: "{{ upload_pipelines | default(false) | string | lower }}"
   audioEnabled: "{{ audio.enabled | default(false) }}"
   asrModel: "{{ audio.asr_model | default('openai/whisper-small') }}"
   useBearerTokenAuth: "{{ (edp.storageType | default('') == 'seaweedfs') and (edp.rbac.enabled | default(false)) }}"
+  nerEnabled: "{{ ner.enabled | default(false) }}"
 
 service:
   type: ClusterIP
@@ -35,11 +46,6 @@ service:
 
 {% if use_alternate_tagging is defined %}
 alternateTagging: {{ use_alternate_tagging }}
-{% endif %}
-{% if tdx.coco.enabled %}
-tdx:
-  common:
-    kbsAddress: {{ KBS_ADDRESS }}
 {% endif %}
 {% if tag is defined %}
 image:
@@ -55,23 +61,15 @@ image:
     repository: {{ registry }}
 {% endif %}
 ingress:
+  enabled: false
+
+httpRoute:
   enabled: true
-  className: nginx
-  annotations: {}
-  tls:
-    - hosts:
-      - *dname
-      secretName: *tsecret
-  hosts:
-    - host: *dname
-      paths:
-        - pathType: Prefix
-          path: /
-          backend:
-            service:
-              name: *svcName
-              port:
-                number: *svcPort
+  gatewayRef:
+    name: erag-gateway
+    namespace: erag-gateway
+  hostnames:
+    - *dname
 {% if ui.additional_values is defined %}
 {{ ui.additional_values | to_nice_yaml }}
 {% endif %}

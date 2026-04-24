@@ -94,14 +94,16 @@ export HF_TOKEN=your_hf_token
 # (Required) Specify the device to run the model on ('cpu' or 'hpu')
 export LLM_DEVICE='cpu'
 
+# (Required) Specify the LLM model to use as the judge
+export LLM_VLLM_MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct
+
+# (Optional) Customize port if needed
+export LLM_VLLM_PORT=8008
+
 # (Optional) Proxy settings if applicable
 export NO_PROXY=localhost,127.0.0.1
 export HTTP_PROXY=
 export HTTPS_PROXY=
-
-# (Optional) Customize port and model if needed
-export LLM_VLLM_MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct
-export LLM_VLLM_PORT=8008
 
 # Start the VLLM service
 ./run_vllm.sh
@@ -135,7 +137,7 @@ cd ../../../../../../src/comps/embeddings/impl/model_server/tei
 
 # (Optional) Customize port and model if needed
 export TEI_PORT=8090
-export TEI_MODEL_NAME=BAAI/bge-large-en-v1.5
+export TEI_MODEL_NAME=BAAI/bge-base-en-v1.5
 
 # Start the embedding service
 ./run_tei.sh

@@ -10,15 +10,6 @@
     - pre-upgrade
     - update-configuration
 
-- name: Ensure Helm repositories
-  kubernetes.core.helm_repository:
-    name: "{{ edp.helm.repo_name }}"
-    repo_url: "{{ edp.helm.repo_url }}"
-    state: present
-  tags:
-    - install
-    - pre-upgrade
-
 - name: Build Helm chart dependencies
   ansible.builtin.command:
     cmd: helm dependency build
@@ -81,26 +72,44 @@
     - install
     - update-configuration
 
-# Creates client_secret_id
-- name: Get client_secret_id keycloak
-  vars:
-    client_id: "{{ edp.client_id }}"
-  ansible.builtin.include_role:
-    name: keycloak
-    tasks_from: get_secret_id
-    apply:
-      tags:
-        - pre-upgrade
-        - update-configuration
-  tags:
-    - install
-    - pre-upgrade
-    - update-configuration
+# Creates keycloak-minio-secret with client-secret key directly in edp namespace
+- name: Retrieve minio OIDC client secret from Keycloak
+  block:
+    - name: Get client_secret_id keycloak
+      vars:
+        get_secret_client_id: "{{ edp.client_id }}"
+        get_secret_ns: "{{ edp.namespace }}"
+        get_secret_secret_name: "keycloak-minio-secret"
+      ansible.builtin.include_role:
+        name: keycloak
+        tasks_from: get_secret_id
+        apply:
+          tags:
+            - pre-upgrade
+            - update-configuration
 
-- name: Set secret client_secret_id
-  ansible.builtin.set_fact:
-    edp_client_secret_id: "{{ client_secret_id.stdout }}"
-  no_log: "{{ secure_logs }}"
+    - name: Set secret client_secret_id
+      ansible.builtin.set_fact:
+        edp_client_secret_id: "{{ client_secret_id.stdout }}"
+      no_log: "{{ secure_logs }}"
+  rescue:
+    - name: Handle missing minio OIDC client during upgrade
+      ansible.builtin.debug:
+        msg: >-
+          Keycloak client '{{ edp.client_id }}' not found - expected when upgrading from
+          a version that did not include the minio OIDC client. The client will be created
+          during the install phase by the keycloak configurator.
+      when: "'pre-upgrade' in ansible_run_tags"
+
+    - name: Set placeholder client secret for pre-upgrade metadata check
+      ansible.builtin.set_fact:
+        edp_client_secret_id: "placeholder-will-be-set-during-install"
+      when: "'pre-upgrade' in ansible_run_tags"
+
+    - name: Fail on missing client secret during install
+      ansible.builtin.fail:
+        msg: "Failed to retrieve client secret for '{{ edp.client_id }}'. The keycloak configurator should have created this client."
+      when: "'pre-upgrade' not in ansible_run_tags"
   tags:
     - install
     - pre-upgrade
@@ -156,7 +165,6 @@
     values_files: >
       {{
         [edp.helm.default_values_file] +
-        ([edp.helm.tdx_resources_file] if (tdx.coco.enabled | bool) else []) +
         [edp_helm_override_values_path]
       }}
   tags:
@@ -238,6 +246,8 @@
     name: "{{ edp.helm.release_name }}"
     namespace: "{{ edp.namespace }}"
     state: absent
+    wait: true
+    wait_timeout: "300s"
   when: edp.enabled
   tags:
     - uninstall

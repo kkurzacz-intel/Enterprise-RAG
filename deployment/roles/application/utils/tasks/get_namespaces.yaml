@@ -12,6 +12,7 @@
     - uninstall
     - restore
     - update-configuration
+    - backup
 
 - name: Get list of pipelines namespaces
   ansible.builtin.set_fact:
@@ -21,13 +22,14 @@
     - uninstall
     - restore
     - update-configuration
+    - backup
 
 - name: Get list of component namespaces
   ansible.builtin.set_fact:
     enabled_namespaces: >
       {{
         [
-          ingress.namespace if ingress.enabled else None,
+          gateway.namespace if gateway.enabled else None,
           keycloak.namespace if keycloak.enabled else None,
           apisix.namespace if apisix.enabled else None,
           telemetry.monitoring.namespace if telemetry.enabled else None,
@@ -35,10 +37,10 @@
           ui.namespace if ui.enabled else None,
           edp.namespace if edp.enabled else None,
           fingerprint.namespace if fingerprint.enabled else None,
-          chat_history.namespace if chat_history.enabled else None,
+          chat_history.namespace if (chat_history.enabled and not (upload_pipelines | default(false) | bool)) else None,
           vector_databases.namespace if vector_databases.enabled else None,
           edp.seaweedfs.namespace if (edp.enabled and edp.storageType == 'seaweedfs') else None,
-          audio.namespace if audio.enabled else None
+          audio.namespace if (audio is defined and audio.enabled) else None
         ]
         | select('defined') | select('truthy') | list
         +
@@ -49,3 +51,4 @@
     - uninstall
     - restore
     - update-configuration
+    - backup

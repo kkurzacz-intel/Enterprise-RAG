@@ -7,7 +7,7 @@
   }
 
   &__label-wrapper {
-    @apply flex h-6 flex-row items-center gap-2;
+    @apply mb-2 flex h-6 flex-row items-center gap-2;
   }
 
   &__input,
@@ -26,10 +26,11 @@
       @apply caret-light-status-error dark:caret-dark-status-error;
     }
 
-    &:is(:disabled) {
-      @apply border-transparent dark:border-transparent;
-      @apply bg-light-bg-disabled dark:bg-dark-bg-disabled;
-      @apply text-light-text-disabled dark:text-dark-text-disabled;
+    &:is(:disabled),
+    &[data-disabled] {
+      @apply border-light-border dark:border-dark-border;
+      @apply text-light-text-primary dark:text-dark-text-primary;
+      @apply pointer-events-none cursor-default bg-transparent;
     }
 
     &:is(:focus, :focus-within, :focus-visible),
@@ -55,12 +56,12 @@
   }
 
   &--sm {
-    .textarea-input--with-label {
-      @apply grid grid-rows-[1rem_1fr] gap-1;
+    &.textarea-input--with-label {
+      @apply grid grid-rows-[1rem_1fr] gap-2;
     }
 
     .textarea-input__label-wrapper {
-      @apply h-4 gap-1;
+      @apply mb-2 h-4 gap-1;
     }
 
     .textarea-input__input {

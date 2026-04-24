@@ -13,21 +13,17 @@ This module contains simple tests for validating:
 These tests focus on functional validation without quality metrics.
 """
 
-import allure
 import asyncio
 import logging
+
+import allure
 import pytest
 
-from tests.e2e.validation.buildcfg import cfg
+from tests.e2e.ui.conftest import requires_chatqa
 
 logger = logging.getLogger(__name__)
 
-# Skip all tests if chatqa pipeline is not deployed
-for pipeline in cfg.get("pipelines", []):
-    if pipeline.get("type") == "chatqa":
-        break
-else:
-    pytestmark = pytest.mark.skip(reason="ChatQA pipeline is not deployed")
+pytestmark = requires_chatqa
 
 
 # Test prompts for basic functionality testing
@@ -58,6 +54,7 @@ BASIC_TEST_PROMPTS = [
 # ============================================================================
 
 @pytest.mark.ui
+@pytest.mark.ui_smoke
 @pytest.mark.asyncio
 @allure.testcase("IEASG-T267")
 async def test_single_prompt_response(chat_ui_helper):
@@ -103,9 +100,10 @@ async def test_single_prompt_response(chat_ui_helper):
     logger.info("Assert 4: Response is not a generic error")
     
     # Assert 5: Bot message has correct data-testid attributes
-    bot_message = page.locator('[data-testid="bot-message"]').last
+    # The UI now uses bot-message-{uuid} as the testid (dynamic per message)
+    bot_message = page.locator('[data-testid^="bot-message-"]').last
     bot_message_visible = await bot_message.is_visible()
-    assert bot_message_visible, "Bot message should have data-testid='bot-message'"
+    assert bot_message_visible, "Bot message should have data-testid starting with 'bot-message-'"
     logger.info("Assert 5: Bot message container has correct data-testid")
     
     # Assert 6: Bot message text has correct data-testid
@@ -324,6 +322,7 @@ async def test_chat_handles_various_question_types(chat_ui_helper):
     logger.info("Test completed: Various question types validated")
 
 @pytest.mark.ui
+@pytest.mark.ui_smoke
 @pytest.mark.asyncio
 @allure.testcase("IEASG-T289")
 async def test_user_message_display(chat_ui_helper):
@@ -332,12 +331,12 @@ async def test_user_message_display(chat_ui_helper):
     
     Steps:
     1. Send a test message
-    2. Verify user message wrapper has data-testid="user-message"
+    2. Verify user message wrapper has data-testid starting with "user-message-"
     3. Verify user message text has data-testid="user-message__text"
     4. Verify message content matches what was sent
     
     Success criteria:
-    - User message container is rendered with correct data-testid
+    - User message container is rendered with correct data-testid (user-message-{uuid})
     - User message text is rendered with correct data-testid
     - Message content matches sent message
     """
@@ -351,14 +350,14 @@ async def test_user_message_display(chat_ui_helper):
     assert success, "Failed to send message"
     logger.info("Message sent successfully")
     
-    # Assert 1: User message container has correct data-testid
-    user_message = page.locator('[data-testid="user-message"]').last
+    # Assert 1: User message container has correct data-testid (user-message-{uuid})
+    user_message = page.locator('[data-testid^="user-message-"]').last
     try:
         await user_message.wait_for(state="visible", timeout=5000)
-        logger.info("Assert 1: User message container rendered with data-testid='user-message'")
+        logger.info("Assert 1: User message container rendered with data-testid='user-message-{uuid}'")
     except Exception as e:
         logger.error(f"User message container not found: {e}")
-        pytest.fail("User message container should be rendered with data-testid")
+        pytest.fail("User message container should be rendered with data-testid starting with 'user-message-'")
     
     # Assert 2: User message text has correct data-testid
     user_message_text = page.locator('[data-testid="user-message__text"]').last

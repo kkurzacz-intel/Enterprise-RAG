@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ARG python_version=3.11
-ARG python_image_version=${python_version}-slim-bookworm
+ARG python_image_version=${python_version}-slim-trixie
 
 FROM python:${python_image_version}
 COPY --from=ghcr.io/astral-sh/uv:0.9.1 /uv /uvx /bin/
+
 ENV LANG=C.UTF-8
+ARG python_version
 
 RUN apt-get update -y && \
     apt-get clean && \
@@ -29,7 +31,7 @@ COPY ./comps/namespace_status_watcher/impl/microservice/uv.lock uv.lock
 
 # --locked will fail when any changes in pyproject.toml were introduced
 # Source: https://github.com/astral-sh/uv/blob/main/docs/concepts/projects/sync.md#checking-if-the-lockfile-is-up-to-date
-RUN uv sync --locked --no-cache
+RUN uv sync --locked --no-cache --group security-overrides
 ENV PATH="/home/user/.venv/bin:$PATH"
 RUN rm uv.lock pyproject.toml
 

@@ -4,7 +4,8 @@ from minio.error import S3Error
 from app.main import app
 from fastapi.testclient import TestClient
 from urllib3.response import HTTPResponse as BaseHTTPResponse
-from app.main import add_new_file, delete_existing_file, filtered_list_bucket
+from app.main import add_new_file, delete_existing_file
+from app.utils import filtered_list_bucket
 
 client = TestClient(app)
 
@@ -98,7 +99,7 @@ def test_add_new_file(mock_delete_existing_file, mock_process_file_task, mock_ge
     mock_db.query.return_value.filter.return_value.all.return_value = [mock_old_file]
 
 
-    file_status = add_new_file(bucket_name, object_name, etag, content_type, size)
+    file_status = add_new_file(object_name, etag, content_type, size, bucket_name)
 
     # Check if new file was added to the database
     mock_db.add.assert_called_once()
@@ -121,7 +122,7 @@ def test_add_new_file(mock_delete_existing_file, mock_process_file_task, mock_ge
 def test_delete_existing_file(mock_delete_file_task, mock_get_db):
     mock_db = MagicMock()
     mock_get_db.return_value.__enter__.return_value = mock_db
-    mock_delete_file_task.delay.return_value = MagicMock(id="123e4567-e89b-12d3-a456-426614174000")
+    mock_delete_file_task.apply_async.return_value = MagicMock(id="123e4567-e89b-12d3-a456-426614174000")
 
     bucket_name = "test-bucket"
     object_name = "test-object"
@@ -138,7 +139,7 @@ def test_delete_existing_file(mock_delete_file_task, mock_get_db):
     mock_db.commit.assert_called()
 
     # Check if the file deletion task was enqueued
-    mock_delete_file_task.delay.assert_called_once_with(file_id=mock_file_status.id, countdown=3)
+    mock_delete_file_task.apply_async.assert_called_once_with(kwargs={'file_id': mock_file_status.id, 'delete_from_sp': True}, countdown=3)
 
     assert mock_file_status.job_name == 'file_deleting_job'
     assert mock_file_status.task_id == "123e4567-e89b-12d3-a456-426614174000"
@@ -806,7 +807,7 @@ def test_api_sync_deleted_file():
 
         # Check if delete_existing_file was called for the missing object
         mock_add_new_file.assert_not_called()
-        mock_delete_existing_file.assert_called_once_with("test-bucket", "test-object")
+        mock_delete_existing_file.assert_called_once_with("test-object", bucket_name="test-bucket")
 
 def test_api_sync_changed_file():
     with patch('app.main.get_db') as mock_get_db, \
@@ -837,7 +838,7 @@ def test_api_sync_changed_file():
 
         # Check if add_new_file was called for the changed object
         mock_add_new_file.assert_called_once()
-        mock_delete_existing_file.assert_called_once_with("test-bucket", "test-object")
+        mock_delete_existing_file.assert_called_once_with("test-object", bucket_name="test-bucket")
 
 def test_api_sync_diff_new_file():
     with patch('app.main.get_db') as mock_get_db, \

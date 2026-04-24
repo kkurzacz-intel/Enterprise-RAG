@@ -11,13 +11,19 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session", autouse=True)
+def validation_user_persistent():
+    """Overrides the global session-scoped fixture with a no-op for uninstall tests."""
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def temporarily_remove_user_required_actions():
     """Overrides the global session-scoped fixture with a no-op for uninstall tests."""
     pass
 
 
 @pytest.fixture(scope="session", autouse=True)
-def disable_guards_at_startup(guard_helper, suppress_logging, temporarily_remove_user_required_actions):
+def disable_guards_at_startup(suppress_logging, temporarily_remove_user_required_actions):
     """Overrides the global session-scoped fixture with a no-op for uninstall tests."""
     pass
 
@@ -25,7 +31,7 @@ def disable_guards_at_startup(guard_helper, suppress_logging, temporarily_remove
 @allure.testcase("IEASG-T309")
 def test_uninstall(k8s_helper):
     """Verify that after uninstallation, only the allowed namespaces and no unexpected pods exist."""
-    allowed_namespaces = ["default", "habana-system", "kube-system", "kube-public", "kube-node-lease", "local-path-storage"]
+    allowed_namespaces = ["default", "habana-ai-operator", "habana-system", "kube-system", "kube-public", "kube-node-lease", "local-path-storage"]
     current_namespaces = k8s_helper.list_namespaces()
     logger.debug(f"Namespaces in the cluster: {current_namespaces}")
     unexpected_ns = [ns for ns in current_namespaces if ns not in allowed_namespaces]

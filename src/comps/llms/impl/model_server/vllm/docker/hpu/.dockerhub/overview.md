@@ -4,7 +4,7 @@ Part of the Intel® AI for Enterprise RAG (ERAG) ecosystem.
 
 ## 🔍 Overview
 
-This vLLM Model Server delivers high-performance Large Language Model inference on Intel® Gaudi® AI Accelerators using the tailored vLLM backend, see [HabanaAI/vllm-fork](https://github.com/HabanaAI/vllm-fork.git). 
+This vLLM Model Server delivers high-performance Large Language Model inference on Intel® Gaudi® AI Accelerators using the tailored vLLM backend, see [vllm-project/vllm-gaudi](https://github.com/vllm-project/vllm-gaudi).
 
 ### Features
 
@@ -26,4 +26,4 @@ which will require the image to be rebuilt.
 
 OPEA ERAG is licensed under the Apache License, Version 2.0.
 
-Copyright © 2024–2025 Intel Corporation. All rights reserved.
+Copyright © 2024–2026 Intel Corporation. All rights reserved.

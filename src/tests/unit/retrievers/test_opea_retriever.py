@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from comps.vectorstores.utils.connectors.connector_redis import ConnectorRedis
+import os
 import pytest
 from unittest import mock
 from comps.cores.proto.docarray import EmbedDoc, SearchedDoc, TextDoc
@@ -35,7 +36,7 @@ def mock_vectorstore():
             return ConnectorRedis.get_object_name_filter_expression(bucket_name, object_name)
         def get_bucket_name_filter_expression(self, bucket_names):
             return ConnectorRedis.get_bucket_name_filter_expression(bucket_names)
-        
+
     with mock.patch('comps.vectorstores.utils.connectors.connector_redis.ConnectorRedis', return_value=MockDbClient):
         yield
 
@@ -388,7 +389,7 @@ def test_generate_rbac():
         assert rbac_by is not None
         assert rbac_by['bucket_names'] == return_bucket_names['buckets']
 
-def test_generate_rbac_no_access(): 
+def test_generate_rbac_no_access():
     OPEARetriever._instance = None
     retriever = OPEARetriever(vector_store="redis")
     return_bucket_names = { "buckets": [] }
@@ -397,7 +398,7 @@ def test_generate_rbac_no_access():
         assert rbac_by is not None
         assert rbac_by['bucket_names'] == []
 
-def test_generate_rbac_malformed(): 
+def test_generate_rbac_malformed():
     OPEARetriever._instance = None
     retriever = OPEARetriever(vector_store="redis")
     return_bucket_names = None
@@ -406,7 +407,7 @@ def test_generate_rbac_malformed():
         assert rbac_by is not None
         assert rbac_by['bucket_names'] == []
 
-def test_generate_rbac_access_error(): 
+def test_generate_rbac_access_error():
     OPEARetriever._instance = None
     retriever = OPEARetriever(vector_store="redis")
     with mock.patch('comps.retrievers.utils.opea_retriever.retrieve_bucket_list', side_effect=ValueError("Authorization header is missing.")):
@@ -453,3 +454,45 @@ async def test_hierarchical_retrieve():
         result = await retriever.hierarchical_retrieve(input=input, k_summaries=1, k_chunks=1, search_by={}, rbac_by=None)
         mock_retrieve.assert_called()
         assert result is not None
+        def test_initialize_basic():
+            OPEARetriever._instance = None
+            retriever = OPEARetriever(vector_store="redis")
+            assert retriever.vector_store is not None
+            assert retriever.rbac_enabled is False
+            assert retriever._query_parsing_enabled is False
+            assert retriever._query_parser is not None
+
+        def test_initialize_with_rbac_enabled():
+            OPEARetriever._instance = None
+            retriever = OPEARetriever(vector_store="redis", rbac_enabled=True)
+            assert retriever.vector_store is not None
+            assert retriever.rbac_enabled is True
+            assert retriever._query_parsing_enabled is False
+            assert retriever._query_parser is not None
+
+        def test_initialize_with_metadata_extraction_off():
+            OPEARetriever._instance = None
+            with mock.patch.dict(os.environ, {"METADATA_EXTRACTION_MODE": "off"}):
+                retriever = OPEARetriever(vector_store="redis")
+                assert retriever._query_parsing_enabled is False
+                assert retriever._query_parser is not None
+
+        def test_initialize_with_metadata_extraction_regex_only():
+            OPEARetriever._instance = None
+            with mock.patch.dict(os.environ, {"METADATA_EXTRACTION_MODE": "regex_only"}):
+                retriever = OPEARetriever(vector_store="redis")
+                assert retriever._query_parsing_enabled is True
+
+        def test_initialize_query_parser_initialization_failure():
+            OPEARetriever._instance = None
+            with mock.patch.dict(os.environ, {"METADATA_EXTRACTION_MODE": "regex_only"}):
+                with mock.patch('comps.retrievers.utils.opea_retriever.QueryMetadataParser.from_env', side_effect=Exception("Parser init failed")):
+                    retriever = OPEARetriever(vector_store="redis")
+                    assert retriever._query_parser is None
+
+        def test_initialize_singleton_pattern():
+            OPEARetriever._instance = None
+            retriever1 = OPEARetriever(vector_store="redis")
+            retriever2 = OPEARetriever(vector_store="redis", rbac_enabled=True)
+            assert retriever1 is retriever2
+            assert retriever1.rbac_enabled is False

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ARG python_version=3.11
-ARG python_image_version=${python_version}-slim-bookworm
+ARG python_image_version=${python_version}-slim-trixie
 
 FROM python:${python_image_version}
 COPY --from=ghcr.io/astral-sh/uv:0.8.0 /uv /uvx /bin/
@@ -12,9 +12,6 @@ ARG python_version
 
 RUN apt-get -y update && \
     apt-get install --no-install-recommends --fix-missing -y nano git && \
-    apt-get install -y --only-upgrade \
-      openssl=3.0.18-1~deb12u2 \
-      libssl3=3.0.18-1~deb12u2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ARG ACCEPT_MSSQL_EULA=Y
@@ -44,8 +41,11 @@ COPY --chown=user:user ./comps/vectorstores/impl/requirements/pyproject.toml ../
 
 # --locked will fail when any changes in pyproject.toml were introduced
 # Source: https://github.com/astral-sh/uv/blob/main/docs/concepts/projects/sync.md#checking-if-the-lockfile-is-up-to-date
-RUN uv sync --locked --no-cache
+RUN uv sync --locked --no-cache --group security-overrides
 ENV PATH="/home/user/comps/retrievers/impl/microservice/.venv/bin:$PATH"
+
+# spaCy for Polish only, need to install the model via uv from GitHub release (not a standard PyPI package)
+RUN uv pip install https://github.com/explosion/spacy-models/releases/download/pl_core_news_sm-3.8.0/pl_core_news_sm-3.8.0.tar.gz
 
 WORKDIR /home/user
 COPY --chown=user:user ./comps/__init__.py ./comps/__init__.py
@@ -56,10 +56,6 @@ COPY --chown=user:user ./comps/retrievers/impl/microservice/.env ./comps/retriev
 COPY --chown=user:user ./comps/retrievers/opea_retriever_microservice.py ./comps/retrievers/opea_retriever_microservice.py
 
 WORKDIR /home/user/comps/retrievers/impl/microservice/.venv/lib/python3.11/site-packages
-COPY --chown=user:user ./comps/vectorstores/impl/issue-346-20250603_160239.patch /tmp/issue-346-20250603_160239.patch
-RUN git apply /tmp/issue-346-20250603_160239.patch
-COPY --chown=user:user ./comps/vectorstores/impl/issue-346-custom.patch /tmp/issue-346-custom.patch
-RUN git apply /tmp/issue-346-custom.patch
 
 WORKDIR /home/user/comps/retrievers
 CMD ["python", "opea_retriever_microservice.py"]

@@ -20,9 +20,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- include "manifest.podLabels" (list .Values.backend.nameOverride .) | nindent 6 }}
-      {{- include "manifest.tdx.annotations" (list .Values.backend.nameOverride .) | nindent 6 }}
     spec:
-      {{- include "manifest.tdx.runtimeClassName" (list .Values.backend.nameOverride .) | nindent 6 }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -140,10 +138,14 @@ spec:
             httpGet:
               path: /health
               port: http
+            timeoutSeconds: 5
+            failureThreshold: 6
           readinessProbe:
             httpGet:
               path: /health
               port: http
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- $defaultValues := toYaml .Values.backend.resources | nindent 12 -}}
             {{- include "manifest.getResource" (list .Values.backend.nameOverride $defaultValues .Values) | nindent 12 }}

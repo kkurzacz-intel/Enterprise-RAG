@@ -12,6 +12,7 @@ This document details the deployment of Intel® AI for Enterprise RAG. By defaul
    5. [Deploy the Intel® AI for Enterprise RAG application on top of the prepared infrastructure](#deploy-the-intel-ai-for-enterprise-rag-application-on-top-of-the-prepared-infrastructure)
    6. [Update application components (models, configurations) as needed](#update-application-components-models-configurations-as-needed)
    7. [Create and restore backups of user data and configurations](#create-and-restore-backups-of-user-data-and-configurations)
+   8. [Troubleshooting](#troubleshooting)
 2. [Interact with the Deployed Pipeline](#interact-with-the-deployed-pipeline)
    1. [Test Deployment](#test-deployment)
    2. [Access the UI/Grafana](#access-the-uigrafana)
@@ -59,6 +60,16 @@ Before proceeding with the deployment, it's recommended to validate that your ha
 
 An example inventory.ini file structure and detailed instructions are provided in the [Cluster Deployment Guide](../docs/cluster_deployment_guide.md).
 
+Minimum hardware requirements:
+| Platform | CPU Logical Cores | RAM | Disk |
+|---|---|---|---|
+| **CPU only (Xeon)** | 60 logical cores | 128 GB | 200 GB |
+| **CPU + HPU (Gaudi)** | 48 logical cores | 128 GB | 500 GB |
+
+> [!NOTE]
+> A limited single-user deployment is also possible on **32 logical cores / 64 GB RAM**.
+> See [docs/minimum_requirements.md](../docs/minimum_requirements.md) for the required configuration changes to lower resource usage.
+
 Once you have created the inventory.ini file, you can validate your hardware resources using the validate playbook located at `playbooks/validate.yaml`:
 
 ```sh
@@ -89,6 +100,22 @@ If your K8s cluster requires installing any of these tools, follow the [Infrastr
 
 Once you have a K8s cluster with all infrastructure components installed, you can install the Intel® AI for Enterprise RAG application on top of it. Follow the [Application Deployment Guide](../docs/application_deployment_guide.md).
 
+### Upload-Optimized Pipeline Deployment
+
+For environments focused on document upload and embedding workloads, you can deploy an upload-optimized pipeline configuration. Set `upload_pipelines: true` in your `config.yaml` and run:
+
+```sh
+ansible-playbook playbooks/application.yaml --tags install,update-configuration -e @<path to config.yaml>
+```
+
+The upload-optimized configuration:
+- Uses a streamlined pipeline focused on embedding and upload throughput
+- Automatically excludes chat_history component (not needed for upload-only workloads)  
+- Maintains fingerprint service for request tracking
+- Can be toggled back to full pipeline mode by setting `upload_pipelines: false` and running with `--tags update-configuration`
+
+For detailed information about pipeline switching, see the [Switching Pipelines Guide](../docs/switching_pipelines.md).
+
 ## Update application components (models, configurations) as needed
 
 After the application is installed, you can update its components (for example, change the LLM or embedding model) by editing your configuration file and running the install tag again. The deployment scripts will detect changes and update only the involved components, minimizing downtime and unnecessary redeployments.
@@ -109,6 +136,12 @@ This will apply the changes and update only the affected services.
 The application supports taking backups and restoring user data, including ingested vector data, ingested documents, user accounts and credentials, and chat history.
 
 For detailed instructions on how to configure backup functionality, create backups, and restore from backups, refer to the [Backup and Restore Guide](../docs/backup.md).
+
+## Troubleshooting
+
+If you encounter issues during or after deployment, use the Intel® AI for Enterprise RAG Debug Tool to collect comprehensive diagnostic information from your Kubernetes cluster.
+
+For detailed instructions on using the debug tool, refer to the [Debug Tool Guide](../docs/debug_tool.md).
 
 # Interact with the Deployed Pipeline
 
@@ -143,15 +176,12 @@ This will test the document summarization functionality by sending a sample docu
 ## Access the UI/Grafana
 
 To access the UI, follow these steps:
-1. Forward the port from the ingress pod:
-    ```bash
-    sudo -E kubectl port-forward --namespace ingress-nginx svc/ingress-nginx-controller 443:https
-    ```
-2. If you want to access the UI from another machine, tunnel the port from the host:
+1. The erag-gateway uses Kubernetes `hostPort` to bind ports 80 and 443 directly on the cluster node - no `kubectl port-forward` is required.
+   If you want to access the UI from another machine, tunnel the port from the host:
     ```bash
     ssh -L 443:localhost:443 user@ip
     ```
-3. Update the `/etc/hosts` file on the machine where you want to access the UI to match the domain name with the externally exposed IP address of the cluster. On a Windows machine, this file is typically located at `C:\Windows\System32\drivers\etc\hosts`.
+2. Update the `/etc/hosts` file on the machine where you want to access the UI to match the domain name with the externally exposed IP address of the cluster. On a Windows machine, this file is typically located at `C:\Windows\System32\drivers\etc\hosts`.
 
     For example, the updated file content should resemble the following:
 
@@ -242,7 +272,7 @@ For accessing Grafana dashboards for all services, visit [this](../docs/telemetr
 
 ## Configure Single Sign-On Integration Using Microsoft Entra ID
 
-For instructions on how to configure single sign-on, visit [this](../docs/single_sign_on_configuration_on_keycloak.md) page.
+For instructions on how to configure single sign-on, visit [this](../docs/sso_and_sharepoint_integration.md) page.
 
 # Remove the installation when no longer needed
 

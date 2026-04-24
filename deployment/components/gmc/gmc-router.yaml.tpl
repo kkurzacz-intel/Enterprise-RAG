@@ -24,10 +24,7 @@ spec:
         app: router-service
         app.kubernetes.io/name: router-service
         app.kubernetes.io/version: "v0.8"
-        {{- include "manifest.tdx.labels" (list "gmc-router" .) | nindent 8 }}
-      {{- include "manifest.tdx.annotations" (list "gmc-router" .) | nindent 6 }}
     spec:
-      {{- include "manifest.tdx.runtimeClassName" (list "gmc-router" .) | nindent 6 }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       serviceAccountName: default
@@ -78,8 +75,11 @@ spec:
         - {{.GRAPH_JSON}}
         ` -}}
         resources:
-          {{- $defaultValues := "{requests: {cpu: '1', memory: '1Gi'}, limits: {cpu: '1', memory: '1Gi'}}" -}}
-          {{- include "manifest.getResource" (list "gmc-router" $defaultValues .Values) | nindent 12 }}
+          {{- if and .Values.services (index .Values.services "gmc-router") (index .Values.services "gmc-router" "resources") }}
+          {{- index .Values.services "gmc-router" "resources" | toYaml | nindent 12 }}
+          {{- else }}
+          {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service

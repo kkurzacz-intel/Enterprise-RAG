@@ -18,7 +18,7 @@ import os
 
 def abs_file_path(file_name):
     file_path = '../../e2e/files/dataprep_upload/'
-    return os.path.join(os.path.dirname(__file__), file_path, file_name)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path, file_name)
 
 def test_adoc_loader():
     file_name = 'test_dataprep.adoc'
@@ -91,8 +91,10 @@ def test_ppt_loader():
     assert len(text) > 0
 
 def test_pptx_loader():
-    file_name = 'test_dataprep.pptx'
-    loader = LoadPpt(abs_file_path(file_name))
+    file_name = 'story.pptx'
+    file_path = '../../e2e/files/dataset_en/'
+
+    loader = LoadPpt(os.path.join(os.path.dirname(__file__), file_path, file_name))
     text = loader.extract_text()
     assert text is not None
     assert len(text) > 0
