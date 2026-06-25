@@ -51,6 +51,7 @@ const (
 	TorchserveEmbeddingGaudi = "TorchserveEmbeddingGaudi"
 	VLLMEmbedding      		 = "VLLMEmbedding"
 	TorchserveReranking      = "TorchserveReranking"
+	VLLMReranking            = "VLLMReranking"
 	Retriever                = "Retriever"
 	PromptTemplate           = "PromptTemplate"
 	Reranking                = "Reranking"
@@ -126,6 +127,7 @@ var yamlDict = map[string]string{
 	TeiEmbeddingGaudi:   yaml_dir + "tei_gaudi.yaml",
 	TorchserveEmbedding: yaml_dir + "torchserve_embedding.yaml",
 	TorchserveReranking: yaml_dir + "torchserve_reranking.yaml",
+	VLLMReranking:       yaml_dir + "vllm_reranking.yaml",
 	VLLMEmbedding:       yaml_dir + "vllm_embedding.yaml",
 	Embedding:           yaml_dir + "embedding-usvc.yaml",
 	Retriever:           yaml_dir + "retriever-usvc.yaml",
@@ -244,7 +246,7 @@ func (r *GMConnectorReconciler) reconcileResource(ctx context.Context, graphNs s
 	svc := stepCfg.InternalService.ServiceName
 	svcCfg := &stepCfg.InternalService.Config
 
-	yamlFile, err := r.getTemplateBytes(ctx, stepCfg.StepName)
+	yamlFile, err := r.getTemplateBytes(ctx, stepCfg.StepName, stepCfg.InternalService.ServiceName)
 	if err != nil {
 		_log.Error(err, "Failed to get template bytes for", "step", stepCfg.StepName)
 		return nil, err
@@ -332,7 +334,7 @@ func (r *GMConnectorReconciler) reconcileResource(ctx context.Context, graphNs s
 					if name == "endpoint" || name == "nodes" || name == "LLM_VLLM_API_KEY" {
 						continue
 					}
-					if name == "LLM_MODEL_SERVER_ENDPOINT" {
+					if name == "LLM_MODEL_SERVER_ENDPOINT" || name == "RERANKING_SERVICE_ENDPOINT" || name == "EMBEDDING_MODEL_SERVER_ENDPOINT" {
 						_, err = url.ParseRequestURI(value)
 						if err == nil {
 							itemEnvVar := corev1.EnvVar{
@@ -454,6 +456,17 @@ func (r *GMConnectorReconciler) reconcileResource(ctx context.Context, graphNs s
 				for name, value := range *svcCfg {
 					if name == "endpoint" || name == "nodes" {
 						continue
+					}
+					if name == "LLM_MODEL_SERVER_ENDPOINT" || name == "RERANKING_SERVICE_ENDPOINT" || name == "EMBEDDING_MODEL_SERVER_ENDPOINT" {
+						_, err = url.ParseRequestURI(value)
+						if err == nil {
+							itemEnvVar := corev1.EnvVar{
+								Name:  name,
+								Value: value,
+							}
+							newEnvVars = append(newEnvVars, itemEnvVar)
+							continue
+						}
 					}
 
 					var endpoint, ns string
@@ -1030,7 +1043,16 @@ func recordResource(graph *mcv1alpha3.GMConnector, nodeName string, stepIdx int,
 	return nil
 }
 
-func (r *GMConnectorReconciler) getTemplateBytes(ctx context.Context, resourceType string) ([]byte, error) {
+func resolveTemplatePath(resourceType string, serviceName string) string {
+	// XPU pipelines currently use step name "VLLM" with service "vllm-xpu-svc".
+	// Route that combination to vllm_xpu.yaml instead of the default cpu vllm.yaml.
+	if resourceType == VLLM && strings.Contains(serviceName, "xpu") {
+		return yaml_dir + "vllm_xpu.yaml"
+	}
+	return lookupManifestDir(resourceType)
+}
+
+func (r *GMConnectorReconciler) getTemplateBytes(ctx context.Context, resourceType string, serviceName string) ([]byte, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	configOverrides := &clientcmd.ConfigOverrides{}
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
@@ -1056,7 +1078,7 @@ func (r *GMConnectorReconciler) getTemplateBytes(ctx context.Context, resourceTy
 		return nil, err
 	}
 
-	tmpltFile := lookupManifestDir(resourceType)
+	tmpltFile := resolveTemplatePath(resourceType, serviceName)
 	if tmpltFile == "" {
 		return nil, errors.New("unexpected target")
 	}
@@ -1113,7 +1135,7 @@ func (r *GMConnectorReconciler) reconcileRouterService(ctx context.Context, grap
 	configForRouter["svcName"] = routerServiceName
 	configForRouter["dplymntName"] = routerDeploymentName
 
-	templateBytes, err := r.getTemplateBytes(ctx, Router)
+	templateBytes, err := r.getTemplateBytes(ctx, Router, "")
 	if err != nil {
 		return errors.Wrapf(err, "Failed to get template bytes for %s", Router)
 	}

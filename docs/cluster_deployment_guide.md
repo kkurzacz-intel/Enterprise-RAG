@@ -1,10 +1,10 @@
 # Cluster Deployment Guide
 
-This document explains how to deploy a K8s cluster using Intel® AI for Enterprise RAG ansible automations.
+This document explains how to deploy a K8s cluster using Intel® AI for Enterprise RAG Ansible automations.
 
 All instructions need to be executed on your local machine from the `deployment` folder. 
 
-To deploy a K8s cluster, you need to fill the inventory.ini file that describes K8s node roles and gives ansible information on how to connect to the hosts. Make sure you are able to ssh from your local machine to the nodes on which you want to deploy K8s before provisioning the cluster. 
+To deploy a K8s cluster, you need to fill the inventory.ini file that describes K8s node roles and gives ansible information on how to connect to the hosts. Make sure you are able to ssh from your local machine to the nodes on which you want to deploy K8s before provisioning the cluster.
 
 **Prerequisites**: Ansible nodes need to have passwordless SSH connection from localhost to MACHINE_HOSTNAME. To check this, the command `ssh REMOTE_USER@MACHINE_IP` should work without asking for a password.
 
@@ -146,8 +146,8 @@ igk-0701 | SUCCESS => {
 2. **Edit the configuration file:**
    - Open `inventory/test-cluster/config.yaml`.
    - Fill in the required values:
-     - `deploy_k8s`: `true` to install K8s cluster.
-     - `gaudi_operator`: `true` set value to true only if you are working with Gaudi nodes and want to install the Gaudi software stack via operator.
+     - `deploy_k8s`: `true` to install a Kubernetes cluster.
+     - `gaudi_operator`: set to `true` only if you are working with Habana Gaudi nodes and want to install the Gaudi software stack via operator.
      - `install_csi` - set one of the following options:
         - `local-path-provisioner` for single-node deployment.
         - `nfs` for multi-node deployment; when choosing this option, fill in the nfs section in config.yaml.
@@ -175,6 +175,7 @@ igk-0701 | SUCCESS => {
 
 > [!NOTE]
 > If this is a Gaudi deployment, add the additional flag `-e is_gaudi_platform=true`.
+> If this is an Intel® Arc™ B-Series (XPU) deployment, add the additional flag `-e is_bmg_platform=true` (experimental, for testing purposes only).
 
 4. **Deploy K8s cluster:**
 
@@ -188,4 +189,25 @@ To remove the K8s cluster, run:
 
 ```sh
 ansible-playbook -K playbooks/infrastructure.yaml --tags delete -i inventory/test-cluster/inventory.ini -e @inventory/test-cluster/config.yaml
+```
+
+> [!IMPORTANT]
+> Validate your config file before deletion:
+> - `kubeconfig` must be a valid absolute path (not `FILL_HERE`).
+> - Set `deploy_k8s: true` when the intent is full cluster reset via Kubespray.
+> - Set `intel_gpu_plugin: true` when you want Intel GPU plugin teardown tasks to run.
+
+> [!NOTE]
+> Seeing resources in `kube-system` or `local-path-storage` after running delete does not by itself indicate Intel GPU plugin leftovers. Verify Intel-specific cleanup explicitly:
+
+```sh
+sudo helm list -A | grep -i intel-gpu-plugin || echo "intel-gpu-plugin release not present"
+sudo kubectl get all -A | grep -Ei "intel|gpu" || echo "no intel/gpu workloads found"
+sudo kubectl get crd | grep -i gpudeviceplugins || echo "gpudeviceplugins CRD not present"
+```
+
+If you want CRD cleanup as part of teardown, include:
+
+```sh
+-e intel_gpu_plugin_remove_crd_on_remove=true
 ```

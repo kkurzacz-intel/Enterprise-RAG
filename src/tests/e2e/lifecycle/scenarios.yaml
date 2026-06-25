@@ -1,6 +1,7 @@
 scenarios:
 
   uninstall:
+    skip_auth_setup: true
     lifecycle:
       - test_uninstall.py
 
@@ -8,7 +9,11 @@ scenarios:
     markers: "smoke"
 
   upgrade:
-    markers: "smoke"
+    lifecycle:
+      before-upgrade:
+        - test_pre_upgrade.py
+      after-upgrade:
+        - test_post_upgrade.py
 
   update-llm-model:
     lifecycle:

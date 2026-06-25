@@ -43,7 +43,10 @@ chatqa_endpoints = [
     "reranking-svc.chatqa.svc.cluster.local:8000",
     "retriever-svc.chatqa.svc.cluster.local:6620",
     "router-service.chatqa.svc.cluster.local:8080",
-    "torchserve-reranking-svc.chatqa.svc.cluster.local:8090",
+    # not deployed by default (HPU/torchserve pipeline only)
+    # "torchserve-reranking-svc.chatqa.svc.cluster.local:8090",
+    "vllm-embedding-svc.chatqa.svc.cluster.local:8108",
+    "vllm-reranking-svc.chatqa.svc.cluster.local:8109",
     # vllm endpoint name is different depending on the platform
     # "vllm-service-m.chatqa.svc.cluster.local:8000"
 ]
@@ -52,7 +55,7 @@ for pipeline in cfg.get("pipelines", []):
         http_endpoints.extend(chatqa_endpoints)
 
 edp_endpoints = [
-    "edp-text-extractor.edp.svc.cluster.local:9398",
+    "edp-text-extractor-headless.edp.svc.cluster.local:9398",
     "edp-text-compression.edp.svc.cluster.local:9397",
     "edp-text-splitter.edp.svc.cluster.local:9399",
     "edp-ingestion.edp.svc.cluster.local:6120",
@@ -101,7 +104,9 @@ if cfg.get("telemetry", {}).get("enabled") and cfg.get("telemetry", {}).get("tra
 telemetry_endpoints = [
     "alertmanager-operated.monitoring.svc.cluster.local:9094",
     "loki-canary.monitoring.svc.cluster.local:3500",
-    "loki-memberlist.monitoring.svc.cluster.local:7946",
+    # loki-memberlist is a headless service; ready_pods() returns [] so ztunnel log lines
+    # can never be matched — verify_query_blocked always TIMEOUTs. The authz policy still protects it.
+    # "loki-memberlist.monitoring.svc.cluster.local:7946",
     # prometheus-adapter serves Kubernetes aggregated API called by kube-apiserver (not in mesh)
     # "prometheus-adapter.monitoring.svc.cluster.local:443",
     "prometheus-operated.monitoring.svc.cluster.local:9090",
@@ -162,7 +167,7 @@ def get_vector_db_endpoints():
 
     # Check for redis-cluster implementation first
     try:
-        services = kr8s.get("services", "vdb-redis-cluster-headless", namespace="vdb")
+        services = list(kr8s.get("services", "vdb-redis-cluster-headless", namespace="vdb"))
         if len(services) == 1:
             service = services[0]
             logger.info("Found redis-cluster vector DB service: %s", service.name)
@@ -172,7 +177,7 @@ def get_vector_db_endpoints():
 
     # Check for redis implementation
     try:
-        services = kr8s.get("services", "vdb-redis-headless", namespace="vdb")
+        services = list(kr8s.get("services", "vdb-redis-headless", namespace="vdb"))
         if len(services) == 1:
             service = services[0]
             logger.info("Found redis vector DB service: %s", service.name)

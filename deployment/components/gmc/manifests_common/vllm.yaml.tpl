@@ -2,8 +2,14 @@
 # Source: vllm/templates/configmap.yaml
 # Copyright (C) 2024-2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
+{{- if (.Values.is_bmg_platform_enable | default (.Values.is_bmg_platform | default false)) }}
+{{- $rawContent := .Files.Get "manifests_common/vllm_xpu.yaml.tpl" -}}
+{{- $newContext := dict "Values" .Values "Release" .Release "Chart" .Chart "Files" .Files "Capabilities" .Capabilities "Template" .Template "filename" "vllm_xpu" -}}
+{{- tpl $rawContent $newContext }}
+{{- else }}
 {{- $modelName := required "Please specify a valid llm_model name in your Helm chart values" .Values.llm_model }}
-{{- $modelChatTemplate := (index (default dict .Values.modelConfigs) $modelName).modelChatTemplate | default .Values.defaultModelConfigs.modelChatTemplate }}
+{{- $defaultModelConfigs := (index .Values "defaultModelConfigs" | default dict) }}
+{{- $modelChatTemplate := (index (default dict .Values.modelConfigs) $modelName).modelChatTemplate | default $defaultModelConfigs.modelChatTemplate }}
 {{- $port := "8000" }}
 {{- $vllmReplicas := include "getReplicas" (list .filename .Values) | trim -}}
 {{- /*
@@ -13,8 +19,8 @@
       - Memory request  = base + kvcache
       - Memory limit    = 2 × request
 */ -}}
-{{- $configMapValues := (index (default dict .Values.modelConfigs) $modelName).configMapValues | default ((index .Values).defaultModelConfigs).configMapValues -}}
-{{- $modelExtraArgs := (index (default dict .Values.modelConfigs) $modelName).extraCmdArgs | default .Values.defaultModelConfigs.extraCmdArgs | default list -}}
+{{- $configMapValues := (index (default dict .Values.modelConfigs) $modelName).configMapValues | default $defaultModelConfigs.configMapValues -}}
+{{- $modelExtraArgs := (index (default dict .Values.modelConfigs) $modelName).extraCmdArgs | default $defaultModelConfigs.extraCmdArgs | default list -}}
 {{- $isAwq := has "awq" $modelExtraArgs -}}
 {{- $kvCacheGi := int (index ($configMapValues | default dict) "VLLM_CPU_KVCACHE_SPACE" | default "10") -}}
 {{- $baseMemGi := ternary 16 32 $isAwq -}}
@@ -36,6 +42,7 @@ data:
   {{- end }}
   LLM_DEVICE: "cpu"
   VLLM_TARGET_DEVICE: "cpu"
+  XDG_CACHE_HOME: "/tmp"
   PORT: {{ $port | quote }}
   http_proxy: {{ .Values.proxy.httpProxy | quote }}
   https_proxy: {{ .Values.proxy.httpsProxy | quote }}
@@ -168,19 +175,15 @@ spec:
                   name: hf-token-secret
                   key: HF_TOKEN
             {{- end }}
-            - name: OMP_NUM_THREADS
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.cpu
             - name: VLLM_POD_INDEX
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
           securityContext:
             {{- toYaml $.Values.securityContext | nindent 12 }}
-          image: public.ecr.aws/q9t5s3a7/vllm-cpu-release-repo:v0.11.2
+          image: public.ecr.aws/q9t5s3a7/vllm-cpu-release-repo:v0.21.0
           imagePullPolicy: {{ toYaml (index $.Values "images" $.filename "pullPolicy" | default "Always") }}
-          {{- $modelArgs := (index (default dict $.Values.modelConfigs) $modelName).extraCmdArgs | default ((index $.Values).defaultModelConfigs).extraCmdArgs }}
+          {{- $modelArgs := (index (default dict $.Values.modelConfigs) $modelName).extraCmdArgs | default $defaultModelConfigs.extraCmdArgs }}
           {{- if $modelArgs }}
           {{- $cmd := concat (list "python3" "-m" "vllm.entrypoints.openai.api_server") $modelArgs (list "--model" $modelName "--port" $port) }}
           {{- if $modelChatTemplate }}
@@ -192,9 +195,8 @@ spec:
             - |
                 {{- if not $.Values.balloons.enabled }}
                 source /etc/helpers/assign_cores.sh
-                {{- end }}
-                {{- if $.Values.balloons.enabled }}
-                export VLLM_CPU_OMP_THREADS_BIND=$(tr ' ' ',' < /sys/fs/cgroup/cpuset.cpus.effective)
+                {{- else }}
+                export VLLM_CPU_OMP_THREADS_BIND=$(python3 -c "r=open('/sys/fs/cgroup/cpuset.cpus.effective').read().strip(); cores=[c for p in r.split(',') for c in (range(int(p.split('-')[0]),int(p.split('-')[1])+1) if '-' in p else [int(p)])]; print(','.join(map(str,cores[:-1])))")
                 {{- end }}
                 {{ join " " $cmd }}
           {{- else }}
@@ -204,11 +206,10 @@ spec:
             - |
                 {{- if not $.Values.balloons.enabled }}
                 source /etc/helpers/assign_cores.sh
+                {{- else }}
+                export VLLM_CPU_OMP_THREADS_BIND=$(python3 -c "r=open('/sys/fs/cgroup/cpuset.cpus.effective').read().strip(); cores=[c for p in r.split(',') for c in (range(int(p.split('-')[0]),int(p.split('-')[1])+1) if '-' in p else [int(p)])]; print(','.join(map(str,cores[:-1])))")
                 {{- end }}
-                {{- if $.Values.balloons.enabled }}
-                export VLLM_CPU_OMP_THREADS_BIND=$(tr ' ' ',' < /sys/fs/cgroup/cpuset.cpus.effective)
-                {{- end }}
-                python3 -m "vllm.entrypoints.openai.api_server" --model $LLM_VLLM_MODEL_NAME --device "cpu" --tensor-parallel-size $VLLM_TP_SIZE --pipeline-parallel-size $VLLM_PP_SIZE --dtype $VLLM_DTYPE --max_model_len $VLLM_MAX_MODEL_LEN --max-num-seqs $VLLM_MAX_NUM_SEQS --disable-log-requests --download-dir "/data"{{- if $modelChatTemplate }} --chat-template /etc/vllm/chat_template.jinja{{- end }}
+                python3 -m "vllm.entrypoints.openai.api_server" --model $LLM_VLLM_MODEL_NAME --tensor-parallel-size $VLLM_TP_SIZE --pipeline-parallel-size $VLLM_PP_SIZE --data-parallel-size $VLLM_DATA_PARALLEL_SIZE --block-size $VLLM_BLOCK_SIZE --max-num-batched-tokens $VLLM_MAX_NUM_BATCHED_TOKENS --dtype $VLLM_DTYPE --max_model_len $VLLM_MAX_MODEL_LEN --max-num-seqs $VLLM_MAX_NUM_SEQS --trust-remote-code --download-dir "/data"{{- if $modelChatTemplate }} --chat-template /etc/vllm/chat_template.jinja{{- end }}
           {{- end }}
           volumeMounts:
             - mountPath: /data
@@ -366,19 +367,15 @@ spec:
                   name: hf-token-secret
                   key: HF_TOKEN
             {{- end }}
-            - name: OMP_NUM_THREADS
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.cpu
             - name: VLLM_POD_INDEX
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: public.ecr.aws/q9t5s3a7/vllm-cpu-release-repo:v0.11.2
+          image: public.ecr.aws/q9t5s3a7/vllm-cpu-release-repo:v0.21.0
           imagePullPolicy: {{ toYaml (index .Values "images" .filename "pullPolicy" | default "Always") }}
-          {{- $modelArgs := (index (default dict .Values.modelConfigs) $modelName).extraCmdArgs | default ((index .Values).defaultModelConfigs).extraCmdArgs }}
+          {{- $modelArgs := (index (default dict .Values.modelConfigs) $modelName).extraCmdArgs | default $defaultModelConfigs.extraCmdArgs }}
           {{- if $modelArgs }}
           {{- $cmd := concat (list "python3" "-m" "vllm.entrypoints.openai.api_server") $modelArgs (list "--model" $modelName "--port" $port) }}
           {{- if $modelChatTemplate }}
@@ -391,9 +388,6 @@ spec:
                 {{- if not .Values.balloons.enabled }}
                 source /etc/helpers/assign_cores.sh
                 {{- end }}
-                {{- if .Values.balloons.enabled }}
-                export VLLM_CPU_OMP_THREADS_BIND=$(tr ' ' ',' < /sys/fs/cgroup/cpuset.cpus.effective)
-                {{- end }}
                 {{ join " " $cmd }}
           {{- else }}
           command:
@@ -403,10 +397,7 @@ spec:
                 {{- if not .Values.balloons.enabled }}
                 source /etc/helpers/assign_cores.sh
                 {{- end }}
-                {{- if .Values.balloons.enabled }}
-                export VLLM_CPU_OMP_THREADS_BIND=$(tr ' ' ',' < /sys/fs/cgroup/cpuset.cpus.effective)
-                {{- end }}
-                python3 -m "vllm.entrypoints.openai.api_server" --model $LLM_VLLM_MODEL_NAME --tensor-parallel-size $VLLM_TP_SIZE --pipeline-parallel-size $VLLM_PP_SIZE --dtype $VLLM_DTYPE --max_model_len $VLLM_MAX_MODEL_LEN --max-num-seqs $VLLM_MAX_NUM_SEQS --disable-log-requests --download-dir "/data"{{- if $modelChatTemplate }} --chat-template /etc/vllm/chat_template.jinja{{- end }}
+                python3 -m "vllm.entrypoints.openai.api_server" --model $LLM_VLLM_MODEL_NAME --tensor-parallel-size $VLLM_TP_SIZE --pipeline-parallel-size $VLLM_PP_SIZE --data-parallel-size $VLLM_DATA_PARALLEL_SIZE --block-size $VLLM_BLOCK_SIZE --max-num-batched-tokens $VLLM_MAX_NUM_BATCHED_TOKENS --dtype $VLLM_DTYPE --max_model_len $VLLM_MAX_MODEL_LEN --max-num-seqs $VLLM_MAX_NUM_SEQS --trust-remote-code --download-dir "/data"{{- if $modelChatTemplate }} --chat-template /etc/vllm/chat_template.jinja{{- end }}
           {{- end }}
           volumeMounts:
             - mountPath: /data
@@ -460,12 +451,14 @@ spec:
             {{- $vllmResLims := index ($vllmRes | default dict) "limits" | default dict -}}
             {{- $cpuReq := index $vllmResReqs "cpu" | default "32" -}}
             {{- $cpuLim := index $vllmResLims "cpu" | default "32" }}
+            {{- $memReq := index $vllmResReqs "memory" | default (printf "%dGi" $memRequestGi) -}}
+            {{- $memLim := index $vllmResLims "memory" | default (printf "%dGi" $memLimitGi) }}
             requests:
               cpu: {{ $cpuReq }}
-              memory: {{ printf "%dGi" $memRequestGi }}
+              memory: {{ $memReq }}
             limits:
               cpu: {{ $cpuLim }}
-              memory: {{ printf "%dGi" $memLimitGi }}
+              memory: {{ $memLim }}
       volumes:
         - name: model-volume
           persistentVolumeClaim:
@@ -546,4 +539,5 @@ spec:
         value: 1
         periodSeconds: 90
   {{- end }}
+{{- end }}
 {{- end }}

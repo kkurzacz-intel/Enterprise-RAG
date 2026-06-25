@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import allure
+import concurrent.futures
 import inspect
 import logging
 import pytest
@@ -12,7 +13,7 @@ import os
 import time
 import uuid
 
-from tests.e2e.validation.constants import DATAPREP_UPLOAD_DIR, TEST_FILES_DIR
+from tests.e2e.validation.constants import DATAPREP_UPLOAD_DIR, TEST_FILES_DIR, EDP_NAMESPACE
 from tests.e2e.validation.buildcfg import cfg
 
 # Skip all tests if edp is not deployed
@@ -21,30 +22,6 @@ if not cfg.get("edp", {}).get("enabled"):
 
 
 logger = logging.getLogger(__name__)
-IN_PROGRESS_STATUSES = ["uploaded", "processing", "text_extracting", "text_compression", "text_splitting", "late_chunking", "embedding"]
-
-
-@pytest.fixture(autouse=True)
-def cleanup(edp_helper):
-    yield
-    logger.info("\nAttempting to clean up all items created during the test")
-    files = edp_helper.list_files()
-    for file in files.json():
-        file_name = file["object_name"]
-        if file_name.startswith("test_edp_"):
-            if file["status"] in IN_PROGRESS_STATUSES:
-                logger.info(f"Canceling in progress task: {file_name}")
-                edp_helper.cancel_processing_task(file["id"])
-            elif file["status"] in ["ingested", "error"]:
-                logger.info(f"Removing file: {file_name}")
-                response = edp_helper.generate_presigned_url(file["object_name"], "DELETE", file["bucket_name"])
-                edp_helper.delete_file(response.json().get("url"))
-
-    links = edp_helper.list_links()
-    for link in links.json():
-        if "test_edp_" in link["uri"]:
-            logger.info(f"Removing link: {link['uri']}")
-            edp_helper.delete_link(link["id"])
 
 
 @pytest.mark.smoke
@@ -67,6 +44,17 @@ def test_edp_upload_file(edp_helper):
         response = edp_helper.upload_file(temp_file.name, response.json().get("url"))
         assert response.status_code == 200, f"Failed to upload file. Response: {response.text}"
         edp_helper.wait_for_file_upload(file_basename, "ingested", timeout=60)
+
+
+@allure.testcase("IEASG-T627")
+def test_edp_file_contains_embedding_model_name(edp_helper):
+    """Upload a file, wait for ingestion, and verify that the file list response contains the embedding model name"""
+    file = edp_helper.upload_test_file(size=0.001, prefix=method_name(), status="ingested", timeout=60)
+    assert file.get("embedding_model"), (
+        f"Expected 'embedding_model' to be set for ingested file '{file.get('object_name')}', "
+        f"but got: {file.get('embedding_model')!r}"
+    )
+    logger.info(f"File '{file.get('object_name')}' has embedding_model: {file.get('embedding_model')}")
 
 
 @pytest.mark.smoke
@@ -468,6 +456,174 @@ def test_edp_rbac(edp_helper, chatqa_api_helper, temporarily_remove_regular_user
     assert "2567" in chatqa_api_helper.get_text(response)
     response = chatqa_api_helper.call_chatqa("How many Hot Wheels cars does Lucianoooo have?")
     assert "944" in chatqa_api_helper.get_text(response)
+
+
+TEXT_EXTRACTOR_POD_LABEL_SELECTOR = "app.kubernetes.io/name=edp-ingestion"
+
+
+@allure.testcase("IEASG-T613")
+def test_edp_extractor_pod_restart_during_extraction(edp_helper, k8s_helper):
+    """
+    Delete the text extractor pod to simulate a crash/restart,
+    Then verify the file transitions to error rather that being stuck in-progress.
+    """
+    file = edp_helper.upload_test_file(size=10, prefix=method_name(), status="text_extracting", timeout=300)
+    file_basename = file["object_name"]
+
+    logger.info("Deleting text extractor pod(s)...")
+    k8s_helper.delete_pods_by_label(namespace=EDP_NAMESPACE, label_selector=TEXT_EXTRACTOR_POD_LABEL_SELECTOR)
+
+    logger.info(f"Waiting for file '{file_basename}' to reach error state...")
+    result = edp_helper.wait_for_file_upload(file_basename, "error", timeout=180)
+    assert result["status"] == "error", (
+        f"Expected file to be in error state after extractor pod restart, "
+        f"but got: {result['status']}. job_message: {result.get('job_message')}"
+    )
+    logger.info(f"File correctly transitioned to error state. job_message: {result.get('job_message')}")
+
+    logger.info("Waiting for new ingestion pod to become ready...")
+    k8s_helper.wait_for_pod_ready(namespace=EDP_NAMESPACE, label_selector=TEXT_EXTRACTOR_POD_LABEL_SELECTOR, timeout=300)
+    logger.info("Ingestion pod is ready.")
+
+@allure.testcase("IEASG-T614")
+def test_edp_upload_many_links(edp_helper):
+    """Upload 20 links at once and verify that all of them are ingested"""
+    base_url = "https://arxiv.org/pdf/2007.15619"
+    links = [f"{base_url}?test_edp_upload_many_links={i}" for i in range(20)]
+
+    response = edp_helper.upload_links({"links": links})
+    assert response.status_code == 200, (
+        f"Upload failed. Status: {response.status_code}, Response: {response.text}"
+    )
+    for link in links:
+        edp_helper.wait_for_link_upload(link, "ingested", timeout=600)
+
+
+@allure.testcase("IEASG-T615")
+def test_edp_deleted_links_block_processing_queue(edp_helper, k8s_helper):
+    """
+    Upload 10 links, wait for at least one to start extracting, then delete all.
+    With celery concurrency=6, up to 6 links may already be in-flight when delete happens.
+    Verify that no more than 6 fetches are started (deleted links should be skipped).
+    """
+    base_url = "https://research.nhm.org/pdfs/32460/32460-004.pdf"
+    run_id = uuid.uuid4().hex[:8]
+    links = [f"{base_url}?run={run_id}&idx={i}" for i in range(10)]
+
+    response = edp_helper.upload_links({"links": links})
+    assert response.status_code == 200, f"Upload failed. Response: {response.text}"
+    link_ids = response.json().get("id")
+
+    # Wait until at least one link starts extracting (any link, not necessarily the first)
+    start_time = time.time()
+    while time.time() < start_time + 120:
+        current_links = edp_helper.list_links().json()
+        extracting = [link for link in current_links if link["uri"].startswith(f"{base_url}?run={run_id}")
+                      and link["status"] == "text_extracting"]
+        if extracting:
+            logger.info(f"Link {extracting[0]['uri']} reached text_extracting. Deleting all links now...")
+            break
+        time.sleep(2)
+    else:
+        pytest.fail("Timed out waiting for any link to reach text_extracting")
+
+    for link_id in link_ids:
+        edp_helper.delete_link(link_id)
+    logger.info("All 10 links deleted. Polling text-extractor logs...")
+
+    # Wait for all started fetches to complete, then check if more than 6 were started.
+    # "start fetch <url>" contains the run_id; "Saved file ... from <url>" also contains it.
+    poll_interval = 5
+    max_poll_time = 600
+    poll_start = time.time()
+
+    while time.time() < poll_start + max_poll_time:
+        pod_logs = k8s_helper.get_pod_logs(
+            namespace=EDP_NAMESPACE,
+            label_selector="app.kubernetes.io/name=edp-text-extractor",
+            since_seconds=int(time.time() - start_time) + 60
+        )
+        fetch_started = 0
+        fetch_completed = 0
+        for pod_log in pod_logs:
+            for line in pod_log["logs"].splitlines():
+                if run_id not in line:
+                    continue
+                if "start fetch" in line:
+                    fetch_started += 1
+                elif "Saved file" in line:
+                    fetch_completed += 1
+
+        logger.info(f"Poll: {fetch_started} started, {fetch_completed} completed")
+
+        if fetch_started > 0 and fetch_completed >= fetch_started:
+            logger.info(f"All {fetch_started} fetches completed. Waiting 10s for unexpected new fetches...")
+            time.sleep(10)
+
+            # Re-read logs to check if a new fetch appeared
+            pod_logs = k8s_helper.get_pod_logs(
+                namespace=EDP_NAMESPACE,
+                label_selector="app.kubernetes.io/name=edp-text-extractor",
+                since_seconds=int(time.time() - start_time) + 60
+            )
+            fetch_started = 0
+            for pod_log in pod_logs:
+                for line in pod_log["logs"].splitlines():
+                    if run_id in line and "start fetch" in line:
+                        fetch_started += 1
+            break
+
+        time.sleep(poll_interval)
+    else:
+        logger.warning(f"Timed out. Started: {fetch_started}, Completed: {fetch_completed}")
+
+    logger.info(f"Total 'start fetch' entries: {fetch_started}")
+    assert fetch_started <= 6, (
+        f"Expected at most 6 'start fetch' entries (celery concurrency=6), "
+        f"but found {fetch_started}. "
+        f"Deleted links were not skipped by the processing queue."
+    )
+
+
+@allure.testcase("IEASG-T616")
+def test_edp_upload_many_links_parallel_requests(edp_helper, temporarily_remove_brute_force_detection):
+    """Upload 20 links via 20 parallel requests (1 link per request)"""
+    base_url = "https://arxiv.org/pdf/2007.15619"
+    links = [f"{base_url}?test_edp_upload_many_links_parallel_requests={i}" for i in range(20)]
+
+    def upload_single_link(link):
+        return edp_helper.upload_links({"links": [link]})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(upload_single_link, link): link for link in links}
+        for future in concurrent.futures.as_completed(futures):
+            link = futures[future]
+            response = future.result()
+            assert response.status_code == 200, (
+                f"Upload failed for {link}. "
+                f"Status: {response.status_code}, Response: {response.text}"
+            )
+
+    for link in links:
+        edp_helper.wait_for_link_upload(link, "ingested", timeout=600)
+
+
+@allure.testcase("IEASG-T617")
+def test_edp_upload_many_files(edp_helper, tmp_path):
+    """Upload 100 small files at once and verify all are ingested."""
+    num_files = 100
+    file_names = []
+    for i in range(num_files):
+        name = f"bulk_upload_{i:04d}.txt"
+        path = tmp_path / name
+        content = f"Bulk upload test file {i}. Content: {uuid.uuid4()}\n"
+        path.write_text(content * 20)
+        file_names.append(name)
+
+    edp_helper.upload_files_in_parallel(str(tmp_path), file_names)
+
+    logger.info(f"All {num_files} files uploaded. Waiting for ingestion...")
+    edp_helper.wait_for_all_files_ingestion(set(file_names), timeout=900)
 
 
 def method_name():

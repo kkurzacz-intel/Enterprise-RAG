@@ -15,6 +15,8 @@ proxy:
 
 alternateTagging: false
 
+pipelineNamespace: "chatqa"
+
 edpExternalUrl: "https://s3.erag.com"
 edpExternalCertVerify: "false"
 edpInternalUrl: "http://seaweedfs-s3.seaweedfs.svc:8333"
@@ -27,7 +29,7 @@ edpOidcConfigUrl: "http://keycloak-http.auth.svc/realms/EnterpriseRAG/.well-know
 edpOidcClientSecret: ""
 bucketNameRegexFilter: '.*'
 presignedUrlCredentialsSystemFallback: "false"
-embedding_model_name: &embedding_model_name "BAAI/bge-base-en-v1.5"
+embedding_model_name: &embedding_model_name "nomic-ai/nomic-embed-text-v1"
 
 sharepointTenantId: ""
 sharepointClientId: ""
@@ -51,7 +53,7 @@ hfToken: ""
 
 seaweedfs:
   namespace: "seaweedfs"
-  version: "4.0.407"
+  version: "4.22.0"
   repo: "https://seaweedfs.github.io/seaweedfs/helm"
   persistence:
     enabled: true
@@ -65,6 +67,9 @@ seaweedfs:
   s3:
     port: 8333
   webhook_endpoint: "http://edp-backend.edp.svc:5000/seaweedfs_event"
+  # ignoreBuckets:
+  # - name: bucketToIgnore
+  # - name: anotherOne
   createBuckets:
   - name: default
     anonymousRead: true
@@ -662,6 +667,11 @@ backend:
         configMapKeyRef:
           name: edp-configmap
           key: BUCKET_NAME_REGEX_FILTER
+    - name: SEAWEEDFS_IGNORE_BUCKETS
+      valueFrom:
+        configMapKeyRef:
+          name: edp-configmap
+          key: SEAWEEDFS_IGNORE_BUCKETS
     - name: HIERARCHICAL_DATAPREP_ENDPOINT
       valueFrom:
         configMapKeyRef:
@@ -879,12 +889,12 @@ textExtractor:
       memory: "30Gi"
   hpa:
     minReplicas: 1
-    maxReplicas: 2
+    maxReplicas: 3
     scaleUpTargetValue: 2
-    scaleDownTargetValue: "500m"
+    scaleDownTargetValue: "1"
     behavior:
       scaleDown:
-        stabilizationWindowSeconds: 600
+        stabilizationWindowSeconds: 60
         policies:
         - type: Percent
           value: 25
@@ -894,11 +904,11 @@ textExtractor:
           periodSeconds: 15
       scaleUp:
         selectPolicy: Max
-        stabilizationWindowSeconds: 0
+        stabilizationWindowSeconds: 60
         policies:
         - type: Pods
           value: 1
-          periodSeconds: 15
+          periodSeconds: 60
 
 textCompression:
   nameOverride: "edp-text-compression"
@@ -1018,8 +1028,7 @@ embedding:
   enabled: true
   remoteEmbeddingUri: "http://embedding-svc.chatqa.svc:6000/v1/embeddings"
   config:
-    connector: "langchain"
-    modelName: "BAAI/bge-base-en-v1.5"
+    modelName: "nomic-ai/nomic-embed-text-v1"
     modelServer: "torchserve"
     modelServerEndpoint: "http://torchserve-embedding-svc.chatqa.svc:8090"
     timeout: "120"
@@ -1045,17 +1054,22 @@ ingestion:
   tag: latest
   config:
     opeaLoggerLevel: "INFO" # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
-    embedding_model_name: *embedding_model_name # e.g., "BAAI/bge-base-en-v1.5"
+    embedding_model_name: *embedding_model_name # e.g., "nomic-ai/nomic-embed-text-v1"
     # Vector Algorithm configuration
     vector_algorithm: "FLAT" # "FLAT", "HNSW", "SVS-VAMANA"
     vector_dims: "768" # Auto-detected from embedding_model_name by resolve_vector_dims.py; kept here as Helm chart default only
     vector_datatype: "FLOAT32" # FLOAT16, FLOAT32, FLOAT64
     vector_distance_metric: "COSINE" # L2, IP, COSINE
     # For HNSW Algorithm additional settings are available
-    vector_hnsw_m: "32"
-    vector_hnsw_ef_construction: "32"
-    vector_hnsw_ef_runtime: "32"
+    vector_hnsw_m: "16"
+    vector_hnsw_ef_construction: "200"
+    vector_hnsw_ef_runtime: "10"
     vector_hnsw_epsilon: "0.01"
+    # For SVS-VAMANA Algorithm additional settings are available
+    vector_svs_graph_max_degree: "40"
+    vector_svs_construction_window_size: "250"
+    vector_svs_search_window_size: "200"
+    vector_svs_compression: "LeanVec4x8" # "LeanVec4x8" (requires custom Redis image), "Q8", or "" (none)
     # For hierarchical indices
     use_hierarchical_indices: "False"
   pullPolicy: Always

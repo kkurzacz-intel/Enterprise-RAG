@@ -34,9 +34,10 @@
 
 - name: Validate configuration
   ansible.builtin.include_role:
-    name: common/validate_config
+    name: validate_config
   tags:
     - install
+    - pre-upgrade
 
 - name: Create log directory if it does not exist
   ansible.builtin.file:
@@ -71,12 +72,14 @@
         [] +
         ([ui.domainName] if ui.enabled | default(false) else []) +
         ([keycloak.domainName] if keycloak.enabled | default(false) else []) +
+        ([edp.seaweedfs.domainName] if (edp.enabled and edp.storageType == "seaweedfs") | default(false) else []) +
+        ([edp.seaweedfs.apiDomainName] if (edp.enabled and edp.storageType == "seaweedfs") | default(false) else []) +
         ([edp.minio.domainName] if (edp.enabled and edp.storageType == "minio") | default(false) else []) +
         ([edp.minio.apiDomainName] if (edp.enabled and edp.storageType == "minio") | default(false) else []) +
         ([telemetry.domainName] if telemetry.enabled | default(false) else [])
       }}
   ansible.builtin.include_role:
-    name: common/certs
+    name: certs
   tags:
     - install
 

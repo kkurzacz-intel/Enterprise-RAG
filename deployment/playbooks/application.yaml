@@ -63,6 +63,19 @@
         - pre-upgrade
       when: not ansible_check_mode
 
+    - name: Verify backup exists for deployed version before upgrade
+      ansible.builtin.include_role:
+        name: backup
+        tasks_from: verify_backup.yaml
+      vars:
+        solution_version: "{{ deployed_ver | default('') }}"
+      when:
+        - not ansible_check_mode
+        - manifest_exists | default(false) | bool
+        - is_upgrade_mode | default(false) | bool
+      tags:
+        - pre-upgrade
+
     - name: Initial deployment manifest configuration
       ansible.builtin.include_role:
         name: deployment_manifest
@@ -99,6 +112,16 @@
         - install
         - pre-upgrade
         - data-consistency
+
+    - name: Check for embedding model changes
+      ansible.builtin.include_role:
+        name: upgrade
+        tasks_from: check_embedding_model.yaml
+      vars:
+        source_config_path: "{{ config_yaml_path }}"
+      tags:
+        - install
+        - pre-upgrade
 
     - name: Build and push images
       ansible.builtin.include_role:
@@ -193,7 +216,7 @@
     - name: Run vector_databases role
       include_role:
         name: vector_databases
-      when: vector_databases.enabled or "pre-upgrade" in ansible_run_tags
+      when: (vector_databases | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -202,7 +225,7 @@
     - name: RAG Utils role
       ansible.builtin.include_role:
         name: rag_utils
-      when: rag_utils.enabled
+      when: (rag_utils | default({})).enabled | default(false) or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -210,7 +233,7 @@
     - name: Fingerprint role
       ansible.builtin.include_role:
         name: fingerprint
-      when: fingerprint.enabled or "pre-upgrade" in ansible_run_tags
+      when: (fingerprint | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -235,7 +258,7 @@
       ansible.builtin.include_role:
         name: chat_history
       when: >
-        (chat_history.enabled or "pre-upgrade" in ansible_run_tags)
+        ((chat_history | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "uninstall" in ansible_run_tags)
         and not (upload_pipelines | default(false) | bool and "update-configuration" in ansible_run_tags)
       tags:
         - install
@@ -265,7 +288,7 @@
     - name: Gateway role
       ansible.builtin.include_role:
         name: gateway
-      when: gateway.enabled or "pre-upgrade" in ansible_run_tags
+      when: (gateway | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -274,7 +297,7 @@
     - name: Keycloak role
       ansible.builtin.include_role:
         name: keycloak
-      when: keycloak.enabled or "pre-upgrade" in ansible_run_tags
+      when: (keycloak | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -283,7 +306,7 @@
     - name: Apisix role
       ansible.builtin.include_role:
         name: apisix
-      when: apisix.enabled or "pre-upgrade" in ansible_run_tags
+      when: (apisix | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -292,7 +315,7 @@
     - name: UI role
       ansible.builtin.include_role:
         name: ui
-      when: ui.enabled or "pre-upgrade" in ansible_run_tags or "update-configuration" in ansible_run_tags
+      when: (ui | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "update-configuration" in ansible_run_tags or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
@@ -302,12 +325,20 @@
     - name: EDP role
       ansible.builtin.include_role:
         name: edp
-      when: edp.enabled or "pre-upgrade" in ansible_run_tags or "update-configuration" in ansible_run_tags
+      when: (edp | default({})).enabled | default(false) or "pre-upgrade" in ansible_run_tags or "update-configuration" in ansible_run_tags or "uninstall" in ansible_run_tags
       tags:
         - install
         - uninstall
         - pre-upgrade
         - update-configuration
+
+    - name: MCP Gateway role
+      ansible.builtin.include_role:
+        name: mcp_gateway
+      when: mcp is defined and mcp.enabled
+      tags:
+        - install
+        - uninstall
 
     - name: Telemetry role
       ansible.builtin.include_role:

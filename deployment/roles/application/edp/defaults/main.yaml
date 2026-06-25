@@ -3,7 +3,7 @@
 
 ---
 edp:
-  enabled: false
+  enabled: true
   namespace: "edp"
   # Path prefixes: set dynamically by solution_config.yaml when routing_mode == "path"
   # Default values used in path mode:
@@ -66,6 +66,7 @@ edp:
         password_file_name: "edp-postgresql-admin-password"
       user:
         db_username: edp
+        db_name: edp
         password_file_name: "edp-postgresql-user-password"
 
   tls:

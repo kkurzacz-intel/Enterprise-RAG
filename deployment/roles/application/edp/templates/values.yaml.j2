@@ -3,6 +3,8 @@ Copyright (C) 2024-2026 Intel Corporation
 SPDX-License-Identifier: Apache-2.0
 #}
 
+pipelineNamespace: "{{ chatqa_namespace | default('chatqa') }}"
+
 proxy:
   httpProxy: {{ httpProxy }}
   httpsProxy: {{ httpsProxy }}
@@ -14,7 +16,7 @@ alternateTagging: {{ use_alternate_tagging }}
 
 balloonsEnabled: {{ balloons.enabled | default(false) }}
 {% if (minimal_configuration is defined and minimal_configuration) or (edp.minimal_configuration is defined and edp.minimal_configuration) %}
-{% if "cpu" in pipelines[0].samplePath %}
+{% if "cpu" in pipelines[0].samplePath or "xpu" in pipelines[0].samplePath %}
 minimalConfiguration: true
 celery:
   resources:
@@ -28,6 +30,7 @@ textExtractor:
 {% endif %}
 
 embedding_model_name: &embedding_model_name {{ embedding_model_name }}
+{% set pipeline_namespace = chatqa_namespace | default((pipelines[0].namespace if (pipelines | default([]) | length) > 0 else 'chatqa')) %}
 
 {% set fqdn = FQDN | default('erag.com') %}
 {% set s3_prefix = edp.s3DomainPrefix if edp.s3DomainPrefix is defined else 's3' %}
@@ -153,10 +156,10 @@ hierarchicalDataprep:
   config:
     max_new_tokens: {{ edp.hierarchical_indices.maxNewTokens }}
 {% if "cpu" in pipelines[0].samplePath %}
-    vllm_server_endpoint: "http://vllm-service-m.chatqa.svc:8000"
+    vllm_server_endpoint: "http://vllm-service-m.{{ chatqa_namespace | default('chatqa') }}.svc:8000"
     summary_model_name: {{ llm_model }}
 {% elif "hpu" in pipelines[0].samplePath %}
-    vllm_server_endpoint: "http://vllm-gaudi-svc.chatqa.svc:80"
+    vllm_server_endpoint: "http://vllm-gaudi-svc.{{ chatqa_namespace | default('chatqa') }}.svc:80"
     summary_model_name: {{ llm_model_gaudi }}
 {% endif %}
 {% endif %}
@@ -169,7 +172,7 @@ lateChunking:
   config:
     chunk_size: "{{ edp.late_chunking.chunk_size | default('512') }}"
     chunk_overlap: "{{ edp.late_chunking.chunk_overlap | default('0') }}"
-    embedding_service_endpoint: "http://embedding-svc.chatqa.svc:6000/v1/embeddings"
+    embedding_service_endpoint: "http://embedding-svc.{{ chatqa_namespace | default('chatqa') }}.svc:6000/v1/embeddings"
     model_name: "{{ edp.late_chunking.model_name | default('jinaai/jina-embeddings-v2-base-en') }}"
 {% elif not edp.hierarchical_indices.enabled %}
 textExtractor:
@@ -185,8 +188,9 @@ textCompression:
 textSplitter:
   tag: {{ tag }}
   repository: {{ registry }}
-{% if edp.semantic_chunking.enabled is true %}
   config:
+    embedding_service_endpoint: "http://embedding-svc.{{ chatqa_namespace | default('chatqa') }}.svc:6000/v1/embeddings"
+{% if edp.semantic_chunking.enabled is true %}
     use_semantic_chunking: "True"
 {% endif %}
 {% endif %}
@@ -208,7 +212,7 @@ ingestion:
 {% endif %}
 embedding:
   enabled: false
-  remoteEmbeddingUri: "http://embedding-svc.chatqa.svc:6000/v1/embeddings"
+  remoteEmbeddingUri: "http://embedding-svc.{{ chatqa_namespace | default('chatqa') }}.svc:6000/v1/embeddings"
   repository: {{ registry }}
 dpguard:
   enabled: {{ edp.dpGuard.enabled }}

@@ -47,6 +47,8 @@
     - install
 
 - name: Build Helm chart dependencies
+  # Using `update` (not `build`) so that bumps in Chart.yaml are honoured even
+  # when Chart.lock / charts/*.tgz are stale (e.g. after Loki version bump).
   ansible.builtin.command:
     cmd: helm dependency build
     chdir: "{{ item }}"
@@ -243,6 +245,26 @@
   tags:
     - install
 
+# To avoid upgrade failures, the StatefulSet is orphan-deleted before the
+# chart upgrade. This removes only the StatefulSet controller while preserving
+# the managed Pods and PVCs (e.g. storage-telemetry-logs-loki-* and
+# data-telemetry-logs-minio-*).
+- name: Orphan-delete telemetry-logs StatefulSets to allow immutable-field upgrade
+  kubernetes.core.k8s:
+    state: absent
+    api_version: apps/v1
+    kind: StatefulSet
+    namespace: "{{ telemetry.monitoring.namespace }}"
+    name: "{{ item }}"
+    delete_options:
+      propagationPolicy: Orphan
+  loop:
+    - telemetry-logs-loki
+    - telemetry-logs-minio
+  failed_when: false
+  tags:
+    - install
+
 - name: Install logging Helm chart
   kubernetes.core.helm:
     name: telemetry-logs
@@ -262,8 +284,57 @@
           tag: "{{ helm_otelcol_logs_image_tag }}"
       loki:
         enabled: "{{ telemetry.logging.enabled | default(true) | bool }}"
+        gateway:
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/component: gateway
+                        app.kubernetes.io/instance: telemetry-logs
+                        app.kubernetes.io/name: loki
+        # Loki applies `limits_config.retention_period` only when the compactor
+        # has `retention_enabled: true`, so it is safe to keep both fields
+        # populated and toggle retention via `compactor.retention_enabled`.
+        # Default 744h == 31 days matches Loki's own built-in default for
+        # `limits_config.retention_period`
+        # (https://grafana.com/docs/loki/latest/configure/#limits_config).
+        loki:
+          limits_config:
+            retention_period: "{{ telemetry.logging.retention.retentionHours | default(744) | int }}h"
+            # Manual log deletion via /loki/api/v1/delete API endpoint is disabled by default for safety
+            # Options: 'disabled' (default), 'filter-only', 'filter-and-delete'
+            # Requires compactor.retention_enabled: true to work
+            deletion_mode: "disabled"
+          compactor:
+            retention_enabled: "{{ telemetry.logging.retention.enabled | default(true) | bool }}"
+            delete_request_store: s3
+            # Compactor runs every 10m to process retention and delete requests
+            compaction_interval: 10m
+            # Safety delay before executing delete requests (allows time to cancel)
+            retention_delete_delay: 2h
+          storage_config:
+            aws:
+              bucketnames: chunks
+              endpoint: "http://telemetry-logs-minio.{{ telemetry.monitoring.namespace }}.svc:9000"
+              s3forcepathstyle: true
+        # PVC size for the Loki single-binary pod (WAL + index/compactor
+        # scratch only -- chunks live in MinIO). Hardcoded to 5Gi: the
+        # workload here is bounded by ingest buffering (~minutes of WAL) plus
+        # transient compactor scratch, so 5Gi gives ample headroom while
+        # keeping the PVC footprint small. Not exposed in config.yaml.
+        singleBinary:
+          persistence:
+            size: 5Gi
+        # PVC size for the bundled MinIO that stores Loki chunks.
+        minio:
+          persistence:
+            size: "{{ telemetry.logging.objectStoreSize | default('20Gi') }}"
     create_namespace: true
-    wait: true
+    wait: false
     timeout: "{{ helm_timeout }}"
   tags:
     - install

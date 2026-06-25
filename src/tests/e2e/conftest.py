@@ -29,11 +29,12 @@ from tests.e2e.helpers.guard_helper import GuardHelper
 from tests.e2e.helpers.istio_helper import IstioHelper
 from tests.e2e.helpers.k8s_helper import K8sHelper
 from tests.e2e.helpers.keycloak_helper import KeycloakHelper
+from tests.e2e.helpers.mcp_helper import McpHelper
 from tests.e2e.helpers.sharepoint_helper import SharepointHelper
 
 # List of namespaces to fetch logs from
 NAMESPACES = ["auth", "auth-apisix", "chat-history", "chatqa", "docsum", "edp", "erag-gateway", "fingerprint",
-              "istio-system", "rag-ui", "seaweedfs", "system", "vdb"]
+              "istio-system", "mcp-gateway", "rag-ui", "seaweedfs", "system", "vdb"]
 TEST_LOGS_DIR = "test_logs"
 
 logger = logging.getLogger(__name__)
@@ -421,15 +422,19 @@ def collect_k8s_logs(request):
 
         for pod in pods:
             pod_name = pod.metadata.name
-            log_file = os.path.join(log_dir, f"{namespace}_{pod_name}.log")
-            try:
-                logs = "\n".join(pod.logs(since_time=test_start_time))
-            except Exception as e:
-                logger.warning(f"Failed to read logs for pod {pod_name} in namespace {namespace}. "
-                               f"Pod might have already been deleted. Exception: {e}")
-                continue
-            with open(log_file, "w") as f:
-                f.write(logs)
+            containers = [c.name for c in pod.spec.containers]
+            for container_name in containers:
+                suffix = f"_{container_name}" if len(containers) > 1 else ""
+                log_file = os.path.join(log_dir, f"{namespace}_{pod_name}{suffix}.log")
+                try:
+                    logs = "\n".join(pod.logs(container=container_name, since_time=test_start_time))
+                except Exception as e:
+                    logger.warning(f"Failed to read logs for pod {pod_name} container {container_name} "
+                                   f"in namespace {namespace}. "
+                                   f"Pod might have already been deleted. Exception: {e}")
+                    continue
+                with open(log_file, "w") as f:
+                    f.write(logs)
     logger.info(f"Logs collected in {log_dir}")
 
     # Archive all logs into a tar.gz file
@@ -439,12 +444,42 @@ def collect_k8s_logs(request):
     logger.info(f"Logs archived: {tar_path}")
 
     # Attach in allure report
-    allure.attach.file(tar_path, f"logs_{test_name}.tar.gz")
+    allure.attach.file(tar_path, f"logs_{test_name}.tar.gz", extension="tar.gz")
 
 
 @pytest.fixture(scope="session")
 def edp_helper(keycloak_helper, validation_user_persistent):
     return EdpHelper(keycloak_helper=keycloak_helper)
+
+
+@pytest.fixture(scope="function", autouse=True)
+def edp_cleanup_after_test(edp_helper):
+    """Snapshot EDP file IDs before the test, delete any new files/links after it."""
+    edp_enabled = cfg.get("edp", {}).get("enabled")
+    if not edp_enabled:
+        yield
+        return
+
+    files_before = edp_helper.list_files()
+    ids_before = {f["id"] for f in files_before.json()} if files_before.status_code == 200 else set()
+    yield
+    edp_helper.cleanup_all_files_and_links(file_ids_to_keep=ids_before)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def edp_cleanup_after_session(edp_helper):
+    """Safety net: snapshot files before the session, delete only new ones at the end."""
+    edp_enabled = cfg.get("edp", {}).get("enabled")
+    if not edp_enabled:
+        yield
+        return
+
+    files_before = edp_helper.list_files()
+    ids_before = {f["id"] for f in files_before.json()} if files_before.status_code == 200 else set()
+    yield
+    logger.info("Session-level EDP cleanup: removing files and links added during the test session")
+    edp_helper.cleanup_all_files_and_links(file_ids_to_keep=ids_before)
+
 
 @pytest.fixture(scope="session")
 def sharepoint_helper(keycloak_helper):
@@ -483,6 +518,15 @@ def generic_api_helper():
 @pytest.fixture(scope="session")
 def guard_helper(chatqa_api_helper, fingerprint_api_helper):
     return GuardHelper(chatqa_api_helper, fingerprint_api_helper)
+
+
+@pytest.fixture(scope="session")
+def mcp_helper(request):
+    if not cfg.get("mcp", {}).get("enabled"):
+        pytest.skip("MCP gateway is not deployed")
+    helper = McpHelper(credentials_file=request.config.getoption("--credentials-file"))
+    yield helper
+    helper.close()
 
 
 @pytest.fixture(scope="function")

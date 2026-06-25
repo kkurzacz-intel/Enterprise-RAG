@@ -31,12 +31,13 @@ This document describes configuration options available when deploying Intel® A
    4. [EDP Storage Types](#edp-storage-types)
    5. [Reverse Proxy for External S3 Storage (NetApp ONTAP)](#reverse-proxy-for-external-s3-storage-netapp-ontap)
    6. [Additional Settings for Running Telemetry](#additional-settings-for-running-telemetry)
-   6. [Security Settings](#security-settings)
-   7. [Trust Domain Extensions (TDX)](#trust-domain-extensions-tdx)
-   8. [Registry Configuration](#registry-configuration)
-   9. [Local Image Building](#local-image-building)
-   10. [Routing Mode](#routing-mode)
-   11. [Pipeline Language](#pipeline-language)
+   7. [Security Settings](#security-settings)
+   8. [Trust Domain Extensions (TDX)](#trust-domain-extensions-tdx)
+   9. [Registry Configuration](#registry-configuration)
+   10. [Local Image Building](#local-image-building)
+   11. [Routing Mode](#routing-mode)
+   12. [Pipeline Language](#pipeline-language)
+   12. [Node Pinning (namespace_node_selector)](#node-pinning-namespace_node_selector)
 
 ---
 
@@ -92,7 +93,7 @@ For Intel Gaudi AI accelerators:
 **ChatQA Pipeline:**
 ```yaml
 gaudi_operator: true              # Default: false
-habana_driver_version: "1.22.1-6"
+habana_driver_version: "1.24.0-1007"
 
 pipelines:
   - namespace: chatqa
@@ -105,7 +106,7 @@ pipelines:
 **Docsum Pipeline:**
 ```yaml
 gaudi_operator: true              # Default: false
-habana_driver_version: "1.22.1-6"
+habana_driver_version: "1.24.0-1007"
 
 pipelines:
   - namespace: docsum
@@ -117,7 +118,12 @@ pipelines:
 
 ### Using external inference endpoint
 
-External inference endpoint with OpenAI compatible API can be also used:
+External inference endpoints with OpenAI compatible API can be used for LLM, embedding, and reranking services. Two reference pipelines are provided:
+
+- `reference-external-endpoint.yaml` — only the LLM is external; embedding and reranking are deployed locally.
+- `reference-external-endpoint-embedding-reranking.yaml` — LLM, embedding, and reranking are all external.
+
+Pick the one that matches your setup:
 
 ```yaml
 pipelines:
@@ -128,7 +134,11 @@ pipelines:
     type: chatqa
 ```
 
-This requires additional configuration in `reference-external-endpoint.yaml` in llm step. I. e.
+
+This requires additional configuration in the chosen pipeline file in llm step. i.e.
+
+**LLM external endpoint:**
+
 ```yaml
       - name: Llm
         data: $response
@@ -138,11 +148,43 @@ This requires additional configuration in `reference-external-endpoint.yaml` in 
           config:
             endpoint: /v1/chat/completions
             LLM_MODEL_SERVER: vllm
-            LLM_MODEL_SERVER_ENDPOINT: example.com
+            LLM_MODEL_SERVER_ENDPOINT: https://example.com
             LLM_MODEL_NAME: model-name
 ```
 
-This supports two types of authentication:
+**Embedding external endpoint:**
+```yaml
+      - name: Embedding
+        data: $response
+        dependency: Hard
+        internalService:
+          serviceName: embedding-svc
+          config:
+            endpoint: /v1/embeddings
+            EMBEDDING_MODEL_SERVER_ENDPOINT: https://example.com
+            EMBEDDING_MODEL_SERVER: "vllm"
+```
+
+**Reranking external endpoint:**
+```yaml
+      - name: Reranking
+        data: $response
+        dependency: Hard
+        internalService:
+          serviceName: reranking-svc
+          config:
+            endpoint: /v1/reranking
+            RERANKING_SERVICE_ENDPOINT: https://example.com
+            RERANKING_MODEL_SERVER: "vllm"
+            RERANKING_MODEL_NAME: "BAAI/bge-reranker-base"
+```
+
+For a reranking endpoint that exposes a Cohere-style `/rerank` API (e.g. Nutanix Enterprise AI) rather than the raw vLLM `/score` API, set `RERANKING_MODEL_SERVER: "nai"` instead of `"vllm"`.
+
+> [!NOTE]
+> When using an external endpoint, you do not need a downstream model server step (e.g., `VLLMEmbedding`, `VLLMReranking`) in the pipeline — it can be omitted.
+
+LLM authentication supports two types:
 - OAuth
 - Api key
 
@@ -220,7 +262,7 @@ install_csi: "local-path-provisioner"  # Default
 
 **Default**: ReadWriteOnce
 
-If you are working on multi node cluster change accessMode to `ReadWriteMany`
+If you are working on a multi-node cluster change accessMode to `ReadWriteMany`
 
 ```yaml
 # Optional: Customize PVC settings
@@ -265,17 +307,12 @@ llm_model_gaudi: "mistralai/Mixtral-8x7B-Instruct-v0.1"
 
 ### Embedding Model
 
-**Default**: `BAAI/bge-base-en-v1.5`
+**Default**: `nomic-ai/nomic-embed-text-v1`
 
 ```yaml
 # Default
-embedding_model_name: "BAAI/bge-base-en-v1.5"
+embedding_model_name: "nomic-ai/nomic-embed-text-v1"
 ```
-
-**Important**: 
-- Different embedding models have different vector dimensions
-- **Check the vector dimensions length** in the embedding model description on Hugging Face
-- **Update the `vector_dims` setting** in the `vector_databases` section of your inventory configuration to match the embedding model's output dimensions. Value of `vector_dims` must match `hidden_size` in config.json of the model e.g. https://huggingface.co/BAAI/bge-base-en-v1.5/blob/main/config.json#L11
 
 Example configuration update:
 ```yaml
@@ -328,6 +365,8 @@ balloons:
   throughput_mode: true # set to true to optimize for horizontal scaling
   memory_overcommit_buffer: 0.1 # buffer (% of total memory) for pods using more memory than initially requested
   # vllm_custom_name: "kserve-container" # Optional: Custom container name for external vLLM
+  # reranking_custom_name: "" # Optional: Custom container name for external reranking
+  # embedding_custom_name: "" # Optional: Custom container name for external embedding
 ```
 
 **Benefits**:
@@ -336,20 +375,26 @@ balloons:
 - Reduced context switching
 - Better cache locality
 
-**External vLLM Support**:
+**External Service CPU Pinning**:
 
-The `vllm_custom_name` option allows you to pin CPU cores to external vLLM instances running within the same Kubernetes cluster. This is particularly useful when integrating with third-party AI platforms that deploy their own vLLM containers.
+The `vllm_custom_name`, `reranking_custom_name`, and `embedding_custom_name` options allow you to pin CPU cores to external service instances running within the same Kubernetes cluster. This is particularly useful when integrating with third-party AI platforms that deploy their own containers.
 
-For example, Nutanix AI uses the container name `kserve-container`. To find the correct container name for your external vLLM deployment:
+| Option | Purpose |
+|--------|---------|
+| `vllm_custom_name` | Pin CPUs for external vLLM (LLM inference) pods |
+| `reranking_custom_name` | Pin CPUs for external reranking model server pods |
+| `embedding_custom_name` | Pin CPUs for external embedding model server pods |
+
+For example, Nutanix AI uses the container name `kserve-container`. To find the correct container name for your external deployment:
 
 ```bash
-# Describe the pod running vLLM
-kubectl describe pod <vllm-pod-name> -n <namespace>
+# Describe the pod running the external service
+kubectl describe pod <pod-name> -n <namespace>
 
 # Look for the container name under spec.containers[].name
 ```
 
-When configured, the NRI balloons policy will manage CPU resources for external vLLM instances specified by `vllm_custom_name`.
+When configured, the NRI balloons policy will manage CPU resources for external instances specified by the custom name options.
 
 **Important Deployment Considerations**:
 
@@ -381,7 +426,7 @@ Node: localhost
   Reranking CPU Size: 4
 ```
   
-  Use this information to determine the optimal number of vLLM replicas and their CPU allocation. Your maximum pool avaliable for vLLM will be `VLLM Replicas` multiplied by  `VLLM CPU` Size. In this case it will be 32 vCPU.
+  Use this information to determine the optimal number of vLLM replicas and their CPU allocation. Your maximum pool available for vLLM will be `VLLM Replicas` multiplied by  `VLLM CPU` Size. In this case it will be 32 vCPU.
 
 2. **Deploy external vLLM first**: Deploy your external vLLM instances with the proper number of replicas before deploying Intel® AI for Enterprise RAG
 3. **Configure replicas appropriately**: Ensure vLLM replicas are distributed to allow each instance to fit within a single NUMA node
@@ -645,7 +690,7 @@ Only enable TDX if you have compatible Intel hardware and understand the experim
 ```yaml
 # Defaults
 registry: "docker.io/opea"          # Default: public OPEA registry
-tag: "1.5.0"                        # Default: current release tag
+tag: "2.3.0"                        # Default: current release tag
 local_registry: false               # Default: false (use public registry)
 ```
 
@@ -717,3 +762,42 @@ solution_language: "auto"  # or "en" or "pl"
 
 > [!NOTE]
 > When setting `solution_language` explicitly, ensure the selected LLM, embedding, and reranking models support the target language.
+
+### Node Pinning (namespace_node_selector)
+
+Restricts solution pods to run on a specific node in the Kubernetes cluster:
+
+```yaml
+# Default: {} (no pinning, pods schedule anywhere)
+namespace_node_selector: {}
+
+# Example: Pin to a specific node by hostname
+namespace_node_selector:
+  kubernetes.io/hostname: "worker-node-1"
+```
+
+**Important Limitations**:
+- **Single node only**: Only one node can be specified. Multi-node selectors (e.g. label-based selection across multiple nodes) are not supported.
+- **Topology detection**: When enabled, topology detection runs only on the selected node. The deployment calculates resource allocations based solely on that node's hardware.
+- **Memory calculation**: The `allowed_numa_nodes` restriction (if set) scales memory proportionally assuming uniform distribution across NUMA nodes, which is typical for modern servers but not guaranteed on all hardware.
+
+**Requirements**:
+- The `PodNodeSelector` admission plugin must be enabled on the Kubernetes cluster
+- The annotation `scheduler.alpha.kubernetes.io/node-selector` is applied to all solution namespaces
+
+**Use Cases**:
+- **Resource isolation**: Dedicate a specific node to the solution, separate from other cluster workloads
+- **Hardware targeting**: Force pods onto a node with specific hardware (e.g. high-memory node, node with accelerators)
+- **Multi-tenant clusters**: Partition cluster resources between different teams or applications
+- **Development/testing**: Deploy on a single known node for simplified debugging
+
+**How It Works**:
+When `namespace_node_selector` is set, the deployment applies a node selector annotation to all solution namespaces (chatqa, docsum, mcp, edp, telemetry, etc.). Kubernetes then schedules all pods in those namespaces only on the specified node.
+
+**Verification**:
+After deployment, verify the annotation was applied:
+```bash
+kubectl get namespace chatqa -o jsonpath='{.metadata.annotations.scheduler\.alpha\.kubernetes\.io/node-selector}'
+```
+
+You should see output matching your `namespace_node_selector` configuration (e.g. `{"kubernetes.io/hostname":"worker-node-1"}`).

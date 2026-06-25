@@ -8,6 +8,10 @@ import {
   RowSelectionState,
   SearchBar,
 } from "@intel-enterprise-rag-ui/components";
+import {
+  S3BucketIcon,
+  SharePointSiteIcon,
+} from "@intel-enterprise-rag-ui/icons";
 import { useCallback, useMemo, useState } from "react";
 
 import {
@@ -27,10 +31,7 @@ import BatchDeleteDialog from "@/features/admin-panel/data-ingestion/components/
 import useConditionalPolling from "@/features/admin-panel/data-ingestion/hooks/useConditionalPolling";
 import { FileDataItem } from "@/features/admin-panel/data-ingestion/types";
 import { getFilesTableColumns } from "@/features/admin-panel/data-ingestion/utils/data-tables/files";
-import {
-  S3_BUCKET_EMOJI,
-  SHAREPOINT_SITE_EMOJI,
-} from "@/features/admin-panel/utils";
+import { getAudioQnAAppEnv } from "@/utils";
 
 const FilesDataTable = () => {
   const { data: files, refetch, isLoading } = useGetFilesQuery();
@@ -148,10 +149,29 @@ const FilesDataTable = () => {
     return selectedFiles.filter((file) => file.status === "error");
   }, [selectedFiles]);
 
+  const reingestableFiles = useMemo(() => {
+    const currentEmbeddingModel = getAudioQnAAppEnv(
+      "EMBEDDING_MODEL_MIGRATION_NEW_MODEL",
+    );
+    if (!currentEmbeddingModel) return [];
+    return selectedFiles.filter(
+      (file) =>
+        file.embedding_model !== currentEmbeddingModel &&
+        file.status === "ingested",
+    );
+  }, [selectedFiles]);
+
   const handleBatchRetry = useCallback(async () => {
     await Promise.all(retryableFiles.map((file) => retryFileAction(file.id)));
     setRowSelection({});
   }, [retryableFiles, retryFileAction]);
+
+  const handleBatchReingest = useCallback(async () => {
+    await Promise.all(
+      reingestableFiles.map((file) => retryFileAction(file.id)),
+    );
+    setRowSelection({});
+  }, [reingestableFiles, retryFileAction]);
 
   const handleBatchDelete = useCallback(async () => {
     await Promise.all(
@@ -180,14 +200,20 @@ const FilesDataTable = () => {
         <BatchActionsDropdown
           selectedCount={selectedFiles.length}
           retryableCount={retryableFiles.length}
+          reingestableCount={reingestableFiles.length}
           onRetry={handleBatchRetry}
+          onReingest={handleBatchReingest}
           onDelete={() => setIsDeleteDialogOpen(true)}
         />
       </div>
       {Object.keys(sourceMap).length > 0 && (
         <div className="text-light-text-primary dark:text-dark-text-primary flex gap-4 px-2 py-1 text-xs">
-          <span>{S3_BUCKET_EMOJI} S3 Bucket</span>
-          <span>{SHAREPOINT_SITE_EMOJI} SharePoint Site</span>
+          <span className="flex items-center gap-1">
+            <S3BucketIcon aria-hidden="true" /> S3 Bucket
+          </span>
+          <span className="flex items-center gap-1">
+            <SharePointSiteIcon aria-hidden="true" /> SharePoint Site
+          </span>
         </div>
       )}
       <DataTable

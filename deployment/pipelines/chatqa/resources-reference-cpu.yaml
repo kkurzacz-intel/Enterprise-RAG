@@ -229,10 +229,10 @@ services:
     resources:
       requests:
         cpu: 4
-        memory: 4Gi
+        memory: 2Gi
       limits:
         cpu: 4
-        memory: 16Gi
+        memory: 8Gi
     hpa:
       minReplicas: 4
       maxReplicas: 10
@@ -258,10 +258,10 @@ services:
     replicas: 2
     resources:
       requests:
-        cpu: 4
+        cpu: 8
         memory: 4Gi
       limits:
-        cpu: 4
+        cpu: 8
         memory: 16Gi
     hpa:
       minReplicas: 2
@@ -287,6 +287,35 @@ services:
           - type: Pods
             value: 1
             periodSeconds: 15
+  vllm_reranking:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 4
+        memory: 4Gi
+      limits:
+        cpu: 4
+        memory: 16Gi
+    hpa:
+      minReplicas: 2
+      maxReplicas: 3
+      targetValue: 50
+      # average request queue waiting time in seconds
+      # metric used: 'avg(rate(vllm:request_queue_time_seconds_sum{service="vllm-reranking-svc"}[2m])) by (<<.GroupBy>>)'
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 180
+          policies:
+          - type: Percent
+            value: 25
+            periodSeconds: 120
+        scaleUp:
+          selectPolicy: Max
+          stabilizationWindowSeconds: 60
+          policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 90
   ovms_ner:
     replicas: 1
     resources:
@@ -318,7 +347,7 @@ services:
       # average processing time of single token
       # 1/target value would mean tokens/sec
       # depends on used LLM model and hardware platform used
-      # 'sum(rate(vllm:time_per_output_token_seconds_sum{service="vllm-service-m"}[1m])) by (<<.GroupBy>>) / (0.001 + sum(rate(vllm:time_per_output_token_seconds_count{service="vllm-service-m"}[1m])) by (<<.GroupBy>>))'
+      # 'sum(rate(vllm:request_time_per_output_token_seconds_sum{service="vllm-service-m"}[1m])) by (<<.GroupBy>>) / (0.001 + sum(rate(vllm:request_time_per_output_token_seconds_count{service="vllm-service-m"}[1m])) by (<<.GroupBy>>))'
       behavior:
         scaleDown:
           stabilizationWindowSeconds: 180

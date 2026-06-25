@@ -16,7 +16,10 @@ import {
 } from "@intel-enterprise-rag-ui/control-plane";
 import { useDebug } from "@intel-enterprise-rag-ui/utils";
 
-import { usePostRetrieverQueryMutation } from "@/features/admin-panel/control-plane/api";
+import {
+  useChangeArgumentsMutation,
+  usePostRetrieverQueryMutation,
+} from "@/features/admin-panel/control-plane/api";
 import {
   audioQnAGraphNodesSelector,
   audioQnAGraphSelectedServiceNodeSelector,
@@ -24,16 +27,10 @@ import {
 import { useAppSelector } from "@/store/hooks";
 import { getAudioQnAAppEnv } from "@/utils";
 import { getErrorMessage } from "@/utils/api";
+import { keycloakService } from "@/utils/auth";
 
-type ChangeArgumentsFunction = (
-  request: { name: string; data: unknown }[],
-) => void;
-
-interface ServiceCardProps {
-  changeArguments: ChangeArgumentsFunction;
-}
-
-const ServiceCard = ({ changeArguments }: ServiceCardProps) => {
+const ServiceCard = () => {
+  const [changeArguments] = useChangeArgumentsMutation();
   const selectedServiceNode = useAppSelector(
     audioQnAGraphSelectedServiceNodeSelector,
   );
@@ -55,6 +52,9 @@ const ServiceCard = ({ changeArguments }: ServiceCardProps) => {
       return getErrorMessage(error, defaultMessage);
     };
 
+  const isReadOnly =
+    keycloakService.isMaintainerUser() && !keycloakService.isAdminUser();
+
   if (selectedServiceNode === null) {
     return <NoServiceSelectedCard />;
   }
@@ -70,23 +70,45 @@ const ServiceCard = ({ changeArguments }: ServiceCardProps) => {
         rerankerArgs={rerankerNode?.data?.rerankerArgs}
         onPostRetrieverQuery={handlePostRetrieverQuery}
         onGetErrorMessage={handleGetErrorMessage}
+        isReadOnly={isReadOnly}
         nerEnabled={getAudioQnAAppEnv("NER_ENABLED") === "true"}
       />
     ),
-    reranker: <RerankerCard data={data} changeArguments={changeArguments} />,
+    reranker: (
+      <RerankerCard
+        data={data}
+        changeArguments={changeArguments}
+        isReadOnly={isReadOnly}
+      />
+    ),
     prompt_template: (
       <PromptTemplateCard
         data={data}
         changeArguments={changeArguments}
         validatePromptTemplateForm={validatePromptTemplateForm}
+        isReadOnly={isReadOnly}
       />
     ),
     input_guard: (
-      <LLMInputGuardCard data={data} changeArguments={changeArguments} />
+      <LLMInputGuardCard
+        data={data}
+        changeArguments={changeArguments}
+        isReadOnly={isReadOnly}
+      />
     ),
-    llm: <LLMCard data={data} changeArguments={changeArguments} />,
+    llm: (
+      <LLMCard
+        data={data}
+        changeArguments={changeArguments}
+        isReadOnly={isReadOnly}
+      />
+    ),
     output_guard: (
-      <LLMOutputGuardCard data={data} changeArguments={changeArguments} />
+      <LLMOutputGuardCard
+        data={data}
+        changeArguments={changeArguments}
+        isReadOnly={isReadOnly}
+      />
     ),
   };
 

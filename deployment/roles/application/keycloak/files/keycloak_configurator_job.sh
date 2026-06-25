@@ -16,6 +16,7 @@ ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD}"
 KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak-http:80}"
 MINIO_DOMAIN="${MINIO_DOMAIN:-minio.erag.com}"
 MINIO_PATH_PREFIX="${MINIO_PATH_PREFIX:-}"
+UI_DOMAIN="${UI_DOMAIN:-erag.com}"
 CREDENTIALS_SECRET_NAME="${CREDENTIALS_SECRET_NAME:-erag-credentials}"
 CREDENTIALS_SECRET_NAMESPACE="${CREDENTIALS_SECRET_NAMESPACE:-auth}"
 
@@ -102,6 +103,12 @@ get_or_create_credential() {
 store_credentials_to_secret() {
   log_info "Storing credentials to secret $CREDENTIALS_SECRET_NAME"
 
+  local extra_mcp_keys=""
+  if [[ "${MCP_ENABLED:-false}" == "true" ]]; then
+    extra_mcp_keys="  MCP_TEST_CLIENT_ID: $(echo -n "mcp-test-client" | base64 -w0)
+  MCP_TEST_CLIENT_SECRET: $(echo -n "$MCP_TEST_CLIENT_SECRET" | base64 -w0)"
+  fi
+
   # Create or update secret
   kubectl apply -f - <<EOF
 apiVersion: v1
@@ -120,9 +127,97 @@ data:
   KEYCLOAK_ERAG_USER_PASSWORD: $(echo -n "$KEYCLOAK_ERAG_USER_PASSWORD" | base64 -w0)
   KEYCLOAK_ERAG_MAINTAINER_USERNAME: $(echo -n "$KEYCLOAK_ERAG_MAINTAINER_USERNAME" | base64 -w0)
   KEYCLOAK_ERAG_MAINTAINER_PASSWORD: $(echo -n "$KEYCLOAK_ERAG_MAINTAINER_PASSWORD" | base64 -w0)
+$(if [[ -n "$extra_mcp_keys" ]]; then echo "$extra_mcp_keys"; fi)
 EOF
 
   log_success "Credentials stored in secret"
+}
+
+# Create a ready-to-use test client for the MCP gateway with ERAG-user role.
+# Also assigns erag-admin-group on EnterpriseRAG-oidc-minio so the agent token
+# carries minio_roles=["erag-admin-group"], enabling S3 read/write via SeaweedFS.
+# Credentials are stored in erag-credentials for inclusion in default_credentials.txt.
+create_mcp_test_client() {
+  local realm_name=$1
+  local client_name="mcp-test-client"
+
+  create_client "$realm_name" "$client_name" false true false "" "" false
+
+  local client_uuid
+  client_uuid=$(get_client_id "$realm_name" "$client_name")
+
+  # Service account only — disable browser flows
+  local flows_url="${KEYCLOAK_URL}/admin/realms/${realm_name}/clients/${client_uuid}"
+  local flows_json='{"standardFlowEnabled": false, "implicitFlowEnabled": false}'
+  if curl_keycloak "$flows_url" "$flows_json" PUT; then
+    log_success "Standard and implicit flows disabled for '$client_name'"
+  else
+    log_error "Failed to disable standard flow for '$client_name' (HTTP $HTTP_CODE)"
+  fi
+
+  # Retrieve client secret
+  local secret_response
+  secret_response=$(curl_get "${KEYCLOAK_URL}/admin/realms/${realm_name}/clients/${client_uuid}/client-secret")
+  local client_secret
+  client_secret=$(echo "$secret_response" | jq -r '.value // empty')
+
+  if [[ -z "$client_secret" ]]; then
+    log_error "Failed to retrieve client secret for '$client_name'"
+    return 1
+  fi
+
+  local sa_username="service-account-${client_name}"
+
+  # Check if service account user exists
+  local sa_user_id
+  sa_user_id=$(get_user_id "$realm_name" "$sa_username" 2>/dev/null)
+
+  if [[ -z "$sa_user_id" ]]; then
+    log_error "Service account user '$sa_username' not found - enabling serviceAccountsEnabled on existing client doesn't retroactively create SA user"
+    log_info "Deleting and recreating client to trigger SA user creation..."
+
+    # Delete client
+    local delete_url="${KEYCLOAK_URL}/admin/realms/${realm_name}/clients/${client_uuid}"
+    curl -s -X DELETE "$delete_url" -H "Authorization: Bearer $ACCESS_TOKEN" > /dev/null
+    sleep 3  # Wait for deletion to complete
+
+    # Recreate
+    create_client "$realm_name" "$client_name" false true false "" "" false
+    client_uuid=$(get_client_id "$realm_name" "$client_name")
+
+    # Disable browser flows again
+    local flows_url="${KEYCLOAK_URL}/admin/realms/${realm_name}/clients/${client_uuid}"
+    local flows_json='{"standardFlowEnabled": false, "implicitFlowEnabled": false}'
+    curl_keycloak "$flows_url" "$flows_json" PUT > /dev/null
+
+    # Get new secret
+    secret_response=$(curl_get "${KEYCLOAK_URL}/admin/realms/${realm_name}/clients/${client_uuid}/client-secret")
+    client_secret=$(echo "$secret_response" | jq -r '.value // empty')
+
+    # Retry SA user lookup
+    sleep 2
+    sa_user_id=$(get_user_id "$realm_name" "$sa_username" 2>/dev/null)
+    if [[ -z "$sa_user_id" ]]; then
+      log_error "Service account user '$sa_username' still not found after recreate"
+      return 1
+    fi
+  fi
+
+  log_info "Service account user '$sa_username' found (ID: ${sa_user_id:0:8}...)"
+
+  # Assign ERAG-user client role (on EnterpriseRAG-oidc-backend) to the service account
+  assign_user_client_role "$realm_name" "$sa_username" "ERAG-user" "EnterpriseRAG-oidc-backend"
+
+  # Assign erag-admin-group on EnterpriseRAG-oidc-minio so the agent token carries
+  # minio_roles=["erag-admin-group"], which SeaweedFS maps to S3UserRole (read/write)
+  assign_user_client_role "$realm_name" "$sa_username" "erag-admin-group" "EnterpriseRAG-oidc-minio"
+
+  # Add minio_roles claim mapper so the role appears in the agent's access token
+  add_client_scope_mapper "$realm_name" "$client_name" "$client_name" "minio_roles" "minio_roles" "EnterpriseRAG-oidc-minio"
+
+  MCP_TEST_CLIENT_SECRET="$client_secret"
+  export MCP_TEST_CLIENT_SECRET
+  log_success "MCP test client configured (client: $client_name)"
 }
 
 # Get access token from Keycloak
@@ -222,8 +317,8 @@ get_client_role_id() {
 get_user_id() {
   local realm_name=$1
   local username=$2
-  local url="${KEYCLOAK_URL}/admin/realms/$realm_name/users"
-  curl_get "$url" | jq -r --arg name "$username" '.[] | select(.username == $name) | .id'
+  local url="${KEYCLOAK_URL}/admin/realms/$realm_name/users?username=${username}&exact=true"
+  curl_get "$url" | jq -r '.[0].id // empty'
 }
 
 # Get resource ID
@@ -354,8 +449,9 @@ create_client() {
   local authentication=${4:-false}
   local public_client=${5:-true}
   local root_url=${6:-}
-  local redirect_uris=${7:-*}
+  local redirect_uris=${7:-}
   local direct_access=${8:-true}
+  local web_origins=${9:-}
 
   local url="${KEYCLOAK_URL}/admin/realms/${realm_name}/clients"
 
@@ -370,7 +466,7 @@ create_client() {
     "rootUrl": "'$root_url'",
     "baseUrl": "'$root_url'",
     "redirectUris": ["'$redirect_uris'"],
-    "webOrigins": ["*"],
+    "webOrigins": ["'$web_origins'"],
     "protocol": "openid-connect",
     "frontchannelLogout": false
   }'
@@ -462,8 +558,10 @@ assign_user_client_role() {
 
   if curl_keycloak "$url" "$json"; then
     log_success "Role '$role_name' assigned to user '$username'"
-  else
+  elif [[ $HTTP_CODE == 409 ]]; then
     log_info "Role '$role_name' may already be assigned to '$username'"
+  else
+    log_error "Failed to assign role '$role_name' to '$username' (HTTP $HTTP_CODE)"
   fi
 }
 
@@ -884,6 +982,7 @@ create_federation_mapper() {
 
 log_info "Starting Keycloak configuration"
 log_info "Keycloak URL: $KEYCLOAK_URL"
+log_info "UI domain: $UI_DOMAIN"
 log_info "MinIO domain: $MINIO_DOMAIN"
 
 # Wait for Keycloak to be ready
@@ -912,8 +1011,8 @@ prevent_bruteforce "$KEYCLOAK_REALM"
 
 # Create clients
 log_info "Creating clients..."
-create_client "$KEYCLOAK_REALM" "EnterpriseRAG-oidc" "false" "false" "true"
-create_client "$KEYCLOAK_REALM" "EnterpriseRAG-oidc-backend" "true" "true" "false"
+create_client "$KEYCLOAK_REALM" "EnterpriseRAG-oidc" "false" "false" "true" "" "https://${UI_DOMAIN}/*" "true" "https://${UI_DOMAIN}"
+create_client "$KEYCLOAK_REALM" "EnterpriseRAG-oidc-backend" "true" "true" "false" "" "https://${UI_DOMAIN}/*" "true" "https://${UI_DOMAIN}"
 
 # Create client roles
 log_info "Creating roles..."
@@ -969,7 +1068,7 @@ else
   minio_base_url="https://$MINIO_DOMAIN"
   minio_redirect_uri="https://$MINIO_DOMAIN/oauth_callback"
 fi
-create_client "$KEYCLOAK_REALM" "EnterpriseRAG-oidc-minio" "false" "true" "false" "$minio_base_url" "$minio_redirect_uri" "false"
+create_client "$KEYCLOAK_REALM" "EnterpriseRAG-oidc-minio" "false" "true" "false" "$minio_base_url" "$minio_redirect_uri" "false" "https://${MINIO_DOMAIN}"
 create_client_role "$KEYCLOAK_REALM" "EnterpriseRAG-oidc-minio" "consoleAdmin"
 create_client_role "$KEYCLOAK_REALM" "EnterpriseRAG-oidc-minio" "readwrite"
 create_client_role "$KEYCLOAK_REALM" "EnterpriseRAG-oidc-minio" "erag-admin-group"
@@ -1097,6 +1196,13 @@ if [[ "$FEDERATION_ENDPOINT" =~ ^ldaps?:// ]]; then
   create_federation_mapper "$KEYCLOAK_REALM" "Active Directory Federation" "erag-admin-group-oidc-minio" "$FEDERATION_GROUPS_DN" "(cn=erag-admin-group)" "EnterpriseRAG-oidc-minio"
   create_federation_mapper "$KEYCLOAK_REALM" "Active Directory Federation" "erag-user-group-oidc-minio" "$FEDERATION_GROUPS_DN" "(cn=erag-user-group)" "EnterpriseRAG-oidc-minio"
   create_federation_mapper "$KEYCLOAK_REALM" "Active Directory Federation" "erag-maintainer-group-oidc-minio" "$FEDERATION_GROUPS_DN" "(cn=erag-maintainer-group)" "EnterpriseRAG-oidc-minio"
+fi
+
+# mcp-test-client: ready-to-use ERAG-user scoped client for testing and development.
+# Production integrations should create a dedicated client per consumer.
+if [[ "${MCP_ENABLED:-false}" == "true" ]]; then
+  log_info "Configuring MCP test client..."
+  create_mcp_test_client "$KEYCLOAK_REALM"
 fi
 
 # Store credentials to Kubernetes secret

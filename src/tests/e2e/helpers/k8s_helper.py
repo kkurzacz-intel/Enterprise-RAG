@@ -7,6 +7,7 @@ import base64
 import logging
 
 import kr8s
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +44,68 @@ class K8sHelper:
     def get_backups(self, namespace):
         """Get a list of kr8s CustomResource objects representing backups in a namespace"""
         logger.debug(f"Getting backups in namespace '{namespace}'")
-        return kr8s.get("backups", namespace=namespace)
+        return list(kr8s.get("backups", namespace=namespace))
 
     def list_pods(self, namespace):
         """List all pods in the specified namespace"""
-        return kr8s.get("pods", namespace=namespace)
+        return list(kr8s.get("pods", namespace=namespace))
 
     def get_pod_by_label(self, namespace, label_selector):
         """Returns first pod matching a label selector in a namespace"""
         logger.debug(f"Getting pods with label selector '{label_selector}' in namespace '{namespace}'")
-        pods = kr8s.get("pods", namespace=namespace, label_selector=label_selector)
+        pods = list(kr8s.get("pods", namespace=namespace, label_selector=label_selector))
         if len(pods) == 0:
             raise ResourceNotFound(f"No running pods found with label '{label_selector}' in namespace '{namespace}'.")
         return pods[0]
+
+    def get_deployment_manifest_version(self, namespace="default"):
+        """Read the solution version from the erag-deployment-manifest ConfigMap."""
+        logger.debug("Reading version from erag-deployment-manifest ConfigMap")
+        configmaps = kr8s.get("configmaps", namespace=namespace)
+        for cm in configmaps:
+            if cm.name == "erag-deployment-manifest":
+                manifest_raw = cm.data.get("manifest.yaml", "")
+                manifest = yaml.safe_load(manifest_raw)
+                return manifest["deployment"]["version"]
+        raise ResourceNotFound("ConfigMap 'erag-deployment-manifest' not found")
+
+    def delete_pods_by_label(self, namespace, label_selector):
+        """Delete all pods matching a label selector in a namespace"""
+        logger.debug(f"Deleting pods with label selector '{label_selector}' in namespace '{namespace}'")
+        deleted = 0
+        for pod in kr8s.get("pods", namespace=namespace, label_selector=label_selector):
+            logger.debug(f"Deleting pod '{pod.name}'")
+            pod.delete()
+            deleted += 1
+        if deleted == 0:
+            raise ResourceNotFound(f"No pods found with label '{label_selector}' in namespace '{namespace}'.")
+
+    def wait_for_pod_ready(self, namespace, label_selector, timeout=300):
+        """Wait until a pod matching label_selector is Ready.
+        Already terminating pods are skipped."""
+        logger.debug(f"Waiting for pod with label '{label_selector}' to be ready in namespace '{namespace}'")
+        for pod in kr8s.get("pods", namespace=namespace, label_selector=label_selector):
+            if pod.metadata.get("deletionTimestamp"):
+                logger.debug(f"Pod '{pod.name}' is Terminating, skipping")
+                continue
+            logger.debug(f"Found non-terminating pod '{pod.name}', waiting for condition=Ready")
+            pod.wait("condition=Ready", timeout=timeout)
+            logger.debug(f"Pod '{pod.name}' is ready")
+            return pod
+        raise ResourceNotFound(
+            f"No pods found with label '{label_selector}' in namespace '{namespace}'"
+        )
+
+    def get_pod_logs(self, namespace, label_selector, since_seconds=None):
+        """Get logs from all pods matching a label selector"""
+        all_logs = []
+        for pod in kr8s.get("pods", namespace=namespace, label_selector=label_selector):
+            kwargs = {}
+            if since_seconds:
+                kwargs["since_seconds"] = since_seconds
+            log_lines = list(pod.logs(**kwargs))
+            all_logs.append({"pod": pod.name, "logs": "\n".join(log_lines)})
+        return all_logs
 
     def exec_in_pod(self, pod, command):
         """Execute a command in a pod's container"""

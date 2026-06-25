@@ -105,6 +105,8 @@ spec:
                   key: admin-password
             - name: MINIO_DOMAIN
               value: "{{ minio_domain }}"
+            - name: UI_DOMAIN
+              value: "{{ ui_domain }}"
 {% if minio_path_prefix is defined %}
             - name: MINIO_PATH_PREFIX
               value: "{{ minio_path_prefix }}"
@@ -113,6 +115,8 @@ spec:
               value: "{{ credentials_secret_name }}"
             - name: CREDENTIALS_SECRET_NAMESPACE
               value: "{{ keycloak_namespace }}"
+            - name: MCP_ENABLED
+              value: "{{ mcp.enabled | default(false) | string | lower }}"
 {% if keycloak_oidc_endpoint is defined and keycloak_oidc_endpoint %}
             - name: OIDC_ENDPOINT
               value: "{{ keycloak_oidc_endpoint }}"

@@ -50,11 +50,13 @@ import { PlusIcon } from "@/icons/PlusIcon";
 import { PromptSendIcon } from "@/icons/PromptSendIcon";
 import { PromptStopIcon } from "@/icons/PromptStopIcon";
 import { RefreshIcon } from "@/icons/RefreshIcon";
+import { S3BucketIcon } from "@/icons/S3BucketIcon";
 import { ScrollToBottomIcon } from "@/icons/ScrollToBottomIcon";
 import { SearchIcon } from "@/icons/SearchIcon";
 import { SelectInputArrowDown } from "@/icons/SelectInputArrowDown";
 import { SelectInputArrowUp } from "@/icons/SelectInputArrowUp";
 import { SettingsIcon } from "@/icons/SettingsIcon";
+import { SharePointSiteIcon } from "@/icons/SharePointSiteIcon";
 import { SideMenuIcon } from "@/icons/SideMenuIcon";
 import { SortDownIcon } from "@/icons/SortDownIcon";
 import { SortUpDownIcon } from "@/icons/SortUpDownIcon";
@@ -64,6 +66,7 @@ import { SuccessIcon } from "@/icons/SuccessIcon";
 import { TelemetryIcon } from "@/icons/TelemetryIcon";
 import { TextFileIcon } from "@/icons/TextFileIcon";
 import { UploadIcon } from "@/icons/UploadIcon";
+import { WarningIcon } from "@/icons/WarningIcon";
 
 export const icons: Record<string, ComponentType<IconBaseProps>> = {
   "admin-panel": AdminPanelIcon,
@@ -124,7 +127,10 @@ export const icons: Record<string, ComponentType<IconBaseProps>> = {
   telemetry: TelemetryIcon,
   "text-file": TextFileIcon,
   upload: UploadIcon,
+  "s3-bucket": S3BucketIcon,
+  "sharepoint-site": SharePointSiteIcon,
   speaker: SpeakerIcon,
+  warning: WarningIcon,
   "external-link": ExternalLinkIcon,
 };
 

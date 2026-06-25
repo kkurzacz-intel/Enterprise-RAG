@@ -7,6 +7,7 @@ import { InfoIcon } from "@intel-enterprise-rag-ui/icons";
 
 import BucketSynchronizationDialog from "@/features/admin-panel/data-ingestion/components/BucketSynchronizationDialog/BucketSynchronizationDialog";
 import DataIngestionSettingsDialog from "@/features/admin-panel/data-ingestion/components/DataIngestionSettingsDialog/DataIngestionSettingsDialog";
+import EmbeddingModelMigrationBanner from "@/features/admin-panel/data-ingestion/components/EmbeddingModelMigrationBanner/EmbeddingModelMigrationBanner";
 import FilesDataTable from "@/features/admin-panel/data-ingestion/components/FilesDataTable/FilesDataTable";
 import LinksDataTable from "@/features/admin-panel/data-ingestion/components/LinksDataTable/LinksDataTable";
 import RefreshButton from "@/features/admin-panel/data-ingestion/components/RefreshButton/RefreshButton";
@@ -32,6 +33,7 @@ const DataIngestionTab = () => {
         </p>
       </div>
       <S3CertificateAlertBanner />
+      <EmbeddingModelMigrationBanner />
       <header>
         <h2>Stored Data</h2>
         <div className="data-ingestion-tab__actions">

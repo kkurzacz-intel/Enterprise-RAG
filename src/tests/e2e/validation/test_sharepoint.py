@@ -6,6 +6,10 @@
 import allure
 import logging
 import os
+import shutil
+import tempfile
+import uuid
+
 import pytest
 
 from tests.e2e.validation.buildcfg import cfg
@@ -17,7 +21,7 @@ _oidc = cfg.get("keycloak", {}).get("oidc", {})
 if not all(_oidc.get(k) for k in ("endpoint", "alias", "client_id", "tenant_id", "client_secret")):
     _msg = ("SharePoint OIDC configuration is not fully set (keycloak.oidc.*). "
             "Ensure endpoint, alias, client_id, tenant_id, and client_secret are configured.")
-    logger.warning(_msg)
+    logger.debug(_msg)
     pytest.skip(_msg, allow_module_level=True)
 
 _SP_ENV_VARS = ("SP_SITE_URL_ALL", "SP_SITE_URL_ADMIN", "SP_SITE_URL_USER")
@@ -28,7 +32,7 @@ if _missing_sp_vars:
             f"  export SP_SITE_URL_ALL='https://intel.sharepoint.com/sites/my-site'\n"
             f"  export SP_SITE_URL_ADMIN='https://intel.sharepoint.com/sites/my-admin-site'\n"
             f"  export SP_SITE_URL_USER='https://intel.sharepoint.com/sites/my-user-site'")
-    logger.warning(_msg)
+    logger.debug(_msg)
     pytest.skip(_msg, allow_module_level=True)
 
 SP_SITE_ALL = os.environ.get("SP_SITE_URL_ALL", "")
@@ -70,14 +74,33 @@ _sso_skip_reason = (
 ) if _sso_credentials_missing else ""
 
 
-def _cleanup_sharepoint_sites(sharepoint_helper, edp_helper):
-    """Delete all files from all SharePoint test sites and sync changes."""
+def _snapshot_sharepoint_sites(sharepoint_helper):
+    """Snapshot file names on all SharePoint test sites. Returns {site_url: set of names}.
+    Sites that fail to list (e.g. timeout) are excluded from the dict."""
+    snapshot = {}
     for site in SHAREPOINT_TEST_SITES:
+        try:
+            files = sharepoint_helper.list_site_files(site_name=site)
+            snapshot[site] = {file.get("name") for file in files if file.get("name")}
+            logger.info(f"Snapshot: site '{site}' has {len(snapshot[site])} file(s): {snapshot[site]}")
+        except Exception as e:
+            logger.warning(f"Snapshot: failed to list files for site '{site}': {e}")
+    return snapshot
+
+
+def _cleanup_sharepoint_sites(sharepoint_helper, edp_helper, files_to_keep):
+    """Delete only files that were added during the test session."""
+    for site in SHAREPOINT_TEST_SITES:
+        if site not in files_to_keep:
+            logger.warning(f"Cleanup: skipping site '{site}' — no snapshot available")
+            continue
         try:
             files = sharepoint_helper.list_site_files(site_name=site)
             for file in files:
                 file_name = file.get("name")
                 if not file_name:
+                    continue
+                if file_name in files_to_keep[site]:
                     continue
                 try:
                     sharepoint_helper.delete_file_from_site(site_name=site, file_name=file_name)
@@ -96,10 +119,10 @@ def _cleanup_sharepoint_sites(sharepoint_helper, edp_helper):
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_sharepoint_files(sharepoint_helper, edp_helper):
-    """Delete all files from all SharePoint test sites before and after the entire test suite."""
-    _cleanup_sharepoint_sites(sharepoint_helper, edp_helper)
+    """Snapshot files before tests, then delete only files added during the session."""
+    files_before = _snapshot_sharepoint_sites(sharepoint_helper)
     yield
-    _cleanup_sharepoint_sites(sharepoint_helper, edp_helper)
+    _cleanup_sharepoint_sites(sharepoint_helper, edp_helper, files_to_keep=files_before)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -456,6 +479,123 @@ def test_sp_get_file_url_negative(edp_helper):
         f"Expected error for both empty params, but got {response.status_code}: {response.text}"
 
 
+@allure.testcase("IEASG-T612")
+@pytest.mark.skipif(_rbac_enabled, reason="EDP RBAC is enabled. Skipping non-RBAC SharePoint test")
+def test_sp_reupload_file_content_changes(edp_helper, chatqa_api_helper):
+    """Verify that re-uploading a file with the same name but different content updates the chatbot's knowledge"""
+    file_name = "test_sp_reupload_file.txt"
+    file_path_v1 = os.path.join(DATAPREP_UPLOAD_DIR, file_name)
+    file_path_v2 = os.path.join(DATAPREP_UPLOAD_DIR, "test_sp_reupload_file_v2.txt")
+
+    # Ensure site is connected
+    edp_helper.connect_site(DEFAULT_SP_SITE)
+
+    # Upload v1 of the file
+    response = edp_helper.upload_to_sharepoint(DEFAULT_SP_SITE, file_path_v1)
+    assert response.status_code in (200, 201), f"Failed to upload v1 file. Response: {response.text}"
+
+    # Sync and wait for ingestion
+    sync_response = edp_helper.sync_sharepoint()
+    assert sync_response.status_code == 200, f"Failed to sync SharePoint. Response: {sync_response.text}"
+    file_info = edp_helper.wait_for_file_upload(file_name, "ingested", timeout=120)
+    assert file_info, f"File '{file_name}' was not ingested into EDP"
+
+    # Verify chatbot knows v1 content ("4817 vintage postcards")
+    question = "How many vintage postcards does Rodrigoooo have?"
+    response = chatqa_api_helper.call_chatqa(question)
+    response_text = chatqa_api_helper.get_text(response)
+    logger.info(f"ChatQA response (v1): {response_text}; status code: {response.status_code}")
+    assert response.status_code == 200, f"ChatQA API call failed with status code {response.status_code}"
+    assert "4817" in response_text, f"Chatbot should mention '4817' for v1 content but got: {response_text}"
+
+    # Re-upload with different content using the same file name
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        reupload_path = os.path.join(tmp_dir, file_name)
+        shutil.copy2(file_path_v2, reupload_path)
+
+        response = edp_helper.upload_to_sharepoint(DEFAULT_SP_SITE, reupload_path)
+        assert response.status_code in (200, 201), f"Failed to re-upload file. Response: {response.text}"
+    finally:
+        shutil.rmtree(tmp_dir)
+
+    # Sync and wait for re-ingestion
+    sync_response = edp_helper.sync_sharepoint()
+    assert sync_response.status_code == 200, f"Failed to sync SharePoint. Response: {sync_response.text}"
+    file_info = edp_helper.wait_for_file_upload(file_name, "ingested", timeout=120)
+    assert file_info, f"File '{file_name}' was not re-ingested into EDP"
+
+    # Verify chatbot now knows v2 content ("2163 antique chess sets") and no longer returns v1 content
+    question = "What does Rodrigoooo own?"
+    response = chatqa_api_helper.call_chatqa(question)
+    response_text = chatqa_api_helper.get_text(response)
+    logger.info(f"ChatQA response (v2): {response_text}; status code: {response.status_code}")
+    assert response.status_code == 200, f"ChatQA API call failed with status code {response.status_code}"
+    assert "2163" in response_text, f"Chatbot should mention '2163' for v2 content but got: {response_text}"
+    assert "4817" not in response_text, f"Chatbot still mentions '4817' from v1 after re-upload: {response_text}"
+
+
+@allure.testcase("IEASG-T619")
+@pytest.mark.skipif(_rbac_enabled, reason="EDP RBAC is enabled. Skipping non-RBAC SharePoint test")
+def test_sp_upload_file_in_subdirectory(edp_helper, sharepoint_helper, chatqa_api_helper):
+    """Verify uploading a file to a subdirectory in SharePoint, querying its content, and deleting it"""
+    file_name = "test_sp_upload_in_subdirectory.txt"
+    file_path = os.path.join(DATAPREP_UPLOAD_DIR, file_name)
+    folder_name = "validation_subfolder"
+    remote_path = f"{folder_name}/{file_name}"
+
+    # Ensure site is connected
+    edp_helper.connect_site(DEFAULT_SP_SITE)
+
+    # Upload file to a subdirectory via SharePoint Graph API
+    result = sharepoint_helper.upload_file_to_site(
+        site_name=DEFAULT_SP_SITE, file_path=file_path, remote_path=remote_path
+    )
+    logger.info(f"File uploaded to SharePoint subdirectory: {result}")
+
+    # Sync changes
+    sync_response = edp_helper.sync_sharepoint()
+    assert sync_response.status_code == 200, f"Failed to sync SharePoint. Response: {sync_response.text}"
+
+    # Wait for the file to be ingested into EDP
+    file_info = edp_helper.wait_for_file_upload(file_name, "ingested", timeout=120)
+    assert file_info, f"File '{file_name}' was not ingested into EDP"
+
+    # Verify the file is present in the subdirectory using Microsoft Graph API
+    files = sharepoint_helper.list_site_files(site_name=DEFAULT_SP_SITE, folder_path=folder_name)
+    assert any(f.get("name") == file_name for f in files), \
+        f"Uploaded file not found in subdirectory '{folder_name}'. Files: {files}"
+
+    # Ask a related question to verify the file content is indexed
+    question = "How many handmade ceramic tiles does Kazimierzzzz have?"
+    response = chatqa_api_helper.call_chatqa(question)
+    response_text = chatqa_api_helper.get_text(response)
+    logger.info(f"ChatQA response: {response_text}; status code: {response.status_code}")
+    assert response.status_code == 200, f"ChatQA API call failed with status code {response.status_code}"
+    assert "8471" in response_text, f"Unexpected ChatQA response: {response_text}"
+
+    # Delete the file from the subdirectory
+    sharepoint_helper.delete_file_from_site(site_name=DEFAULT_SP_SITE, file_name=remote_path)
+
+    # Sync and wait for deletion in EDP
+    sync_response = edp_helper.sync_sharepoint()
+    assert sync_response.status_code == 200, f"Failed to sync SharePoint. Response: {sync_response.text}"
+    object_name = file_info.get("object_name")
+    edp_helper.wait_for_file_deletion(object_name)
+
+    # Verify the file is no longer in the subdirectory
+    files = sharepoint_helper.list_site_files(site_name=DEFAULT_SP_SITE, folder_path=folder_name)
+    assert not any(f.get("name") == file_name for f in files), \
+        f"Deleted file still found in subdirectory '{folder_name}'. Files: {files}"
+
+    # Verify chatbot no longer returns the file content
+    response = chatqa_api_helper.call_chatqa(question)
+    response_text = chatqa_api_helper.get_text(response)
+    logger.info(f"ChatQA response (after deletion): {response_text}; status code: {response.status_code}")
+    assert response.status_code == 200, f"ChatQA API call failed with status code {response.status_code}"
+    assert "8471" not in response_text, f"Chatbot still mentions '8471' after file deletion: {response_text}"
+
+
 @allure.testcase("IEASG-T552")
 @pytest.mark.skipif(not _rbac_enabled, reason="EDP RBAC is not enabled. Skipping RBAC SharePoint test")
 @pytest.mark.skipif(_sso_credentials_missing, reason=_sso_skip_reason)
@@ -595,3 +735,51 @@ def test_sp_rbac_shared_site_visible_to_both_users(edp_helper, sharepoint_helper
     assert response.status_code == 200, f"ChatQA API call failed with status code {response.status_code}"
     assert "4281" in response_text, \
         f"SSO user should see content from shared site but got: {response_text}"
+
+
+@allure.testcase("IEASG-T618")
+@pytest.mark.skipif(
+    _rbac_enabled,
+    reason="EDP RBAC is enabled. Skipping non-RBAC SharePoint test"
+)
+def test_sp_upload_many_files(edp_helper, sharepoint_helper):
+    """Upload 100 files directly to SharePoint, sync, and verify all are ingested."""
+    num_files = 100
+
+    # Ensure site is connected
+    edp_helper.connect_site(DEFAULT_SP_SITE)
+
+    # Generate files
+    tmp_dir = tempfile.mkdtemp(prefix="sp_bulk_upload_")
+    file_paths = []
+    try:
+        for i in range(num_files):
+            name = f"sp_bulk_{i:04d}.txt"
+            path = os.path.join(tmp_dir, name)
+            content = (
+                f"SharePoint bulk upload test {i}. "
+                f"Content: {uuid.uuid4()}\n"
+            )
+            with open(path, "w") as f:
+                f.write(content * 20)
+            file_paths.append(path)
+
+        # Upload all files in parallel directly to SharePoint
+        sharepoint_helper.upload_files_in_parallel(
+            DEFAULT_SP_SITE, file_paths
+        )
+
+        # Trigger manual sync
+        sync_response = edp_helper.sync_sharepoint()
+        assert sync_response.status_code == 200, (
+            f"Failed to sync. Response: {sync_response.text}"
+        )
+
+        # Wait for all files to be ingested
+        basenames = {os.path.basename(p) for p in file_paths}
+        edp_helper.wait_for_all_files_ingestion(
+            basenames, timeout=900
+        )
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

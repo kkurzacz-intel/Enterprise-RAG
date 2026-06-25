@@ -9,10 +9,9 @@ import {
   useControlPlanePolling,
 } from "@intel-enterprise-rag-ui/control-plane";
 import { FitViewOptions, Node, NodeChange } from "@xyflow/react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import {
-  useChangeArgumentsMutation,
   useGetServicesDataQuery,
   useLazyGetServicesDataQuery,
 } from "@/features/admin-panel/control-plane/api";
@@ -42,7 +41,6 @@ const ControlPlaneTab = () => {
   );
 
   const [getServicesData, { isFetching }] = useLazyGetServicesDataQuery();
-  const [changeArguments] = useChangeArgumentsMutation();
 
   const handleAutorefreshChange = useCallback(
     (enabled: boolean) => {
@@ -57,12 +55,18 @@ const ControlPlaneTab = () => {
 
   useControlPlanePolling(handleRefresh, isAutorefreshEnabled);
 
+  useEffect(() => {
+    return () => {
+      dispatch(setChatQnAGraphSelectedServiceNode([]));
+    };
+  }, [dispatch]);
+
   return (
     <ControlPlanePanel
       isLoading={isLoading}
       isRenderable={isRenderable}
       Graph={ChatQnAGraph}
-      ConfigPanel={() => <ServiceCard changeArguments={changeArguments} />}
+      ConfigPanel={ServiceCard}
       isAutorefreshEnabled={isAutorefreshEnabled}
       onAutorefreshChange={handleAutorefreshChange}
       onRefresh={handleRefresh}

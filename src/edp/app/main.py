@@ -28,7 +28,7 @@ from app.sharepoint import (
     sp_sync_lock, filter_sp_sites_for_user,
     download_sp_file_by_path
 )
-from app.tasks import process_file_task, delete_file_task, process_link_task, delete_link_task, celery
+from app.tasks import process_file_task, delete_file_task, process_link_task, delete_link_task, celery, EMBEDDING_MODEL_NAME
 from app.rbac import RBACFactory, get_seaweedfs_client_using_bearer_token
 from celery.result import AsyncResult
 from comps.cores.mega.logger import change_opea_logger_level, get_opea_logger
@@ -393,6 +393,7 @@ def add_new_file(object_name, etag, content_type, size, bucket_name=None, site_n
                 size=size,
                 site_name=site_name,
                 status='uploaded',
+                embedding_model=EMBEDDING_MODEL_NAME,
                 created_at=datetime.now(timezone.utc)
             )
             db.add(file_status)
@@ -496,6 +497,7 @@ def add_new_link(uri):
         link_status = LinkStatus(
             uri=uri,
             status='uploaded',
+            embedding_model=EMBEDDING_MODEL_NAME,
             created_at=datetime.now(timezone.utc)
         )
         db.add(link_status)
@@ -692,13 +694,24 @@ def process_seaweedfs_event(event: SeaweedFSEventData):
 
     key_parts = event.key.strip('/').split('/', 2)
 
+    # Ignore internal paths (like /etc/iam) that SeaweedFS emits during upgrades
+    if key_parts[0] != 'buckets':
+        logger.info(f"Ignoring non-bucket event path: {event.key}")
+        return JSONResponse(content={'message': 'Non-bucket event ignored'})
+
     if len(key_parts) < 3:
         # Bucket-level event (e.g. bucket create/delete) — no file to process
-        logger.debug(f"Bucket-level SeaweedFS event (no object): {event.key}")
+        logger.info(f"Bucket-level SeaweedFS event (no object): {event.key}")
         return JSONResponse(content={'message': 'Bucket-level event ignored'})
 
     bucket_name = unquote_plus(key_parts[1])
     object_name = unquote_plus(key_parts[2])
+
+    # Skip events from explicitly ignored buckets (configurable via SEAWEEDFS_IGNORE_BUCKETS)
+    ignore_buckets = [b.strip() for b in os.getenv('SEAWEEDFS_IGNORE_BUCKETS', '').split(',') if b.strip()]
+    if bucket_name in ignore_buckets:
+        logger.info(f"Ignoring event for excluded bucket '{bucket_name}': {event.key}")
+        return JSONResponse(content={'message': f'Event for excluded bucket {bucket_name} ignored'})
 
     if event.event_type in ['create', 'update', 'rename']:
         if not event.message or not event.message.new_entry:

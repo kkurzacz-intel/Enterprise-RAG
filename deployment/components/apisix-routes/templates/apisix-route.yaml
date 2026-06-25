@@ -24,25 +24,24 @@ spec:
       - serviceName: {{ .backend_service }}
         servicePort: {{ .service_port }}
     plugins:
+    {{- if .service_regex }}
     - name: proxy-rewrite
       enable: true
       config:
-        {{- if .service_path }}
-        uri: {{ .service_path }}
-        {{- else if .service_regex }}
         regex_uri:
           {{- range .service_regex }}
           - {{ . }}
           {{- end }}
-        {{- end }}
+    {{- end }}
     - name: limit-count
       enable: true
       config:
         count: {{ .rate_limit_count }}
         time_window: 60
         key_type: var
-        key: http_authorization
+        key: {{ if .skip_auth }}http_x_mcp_client_id{{ else }}http_authorization{{ end }}
         rejected_code: 429
+    {{- if not .skip_auth }}
     - name: authz-keycloak
       enable: true
       config:
@@ -55,6 +54,7 @@ spec:
           {{- range .permissions }}
           - {{ . }}
           {{- end }}
+    {{- end }}
 ---
 {{- end }}
 {{- end }}

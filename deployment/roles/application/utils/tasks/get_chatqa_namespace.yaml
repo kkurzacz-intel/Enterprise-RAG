@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ---
-- name: Get namespace for the first pipeline item with type chatqa
+- name: Get namespace for the first pipeline item with type chatqa (falls back to first pipeline namespace)
   ansible.builtin.set_fact:
     chatqa_namespace: >-
       {{
         (pipelines | selectattr('type', 'equalto', 'chatqa') | list | first).namespace
-        if (pipelines | selectattr('type', 'equalto', 'chatqa') | list | first) is not none
-        else ''
+        if (pipelines | selectattr('type', 'equalto', 'chatqa') | list | length > 0)
+        else (pipelines | first).namespace
       }}
   tags:
     - install

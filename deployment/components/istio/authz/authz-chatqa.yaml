@@ -18,6 +18,7 @@ spec:
         - cluster.local/ns/auth-apisix/sa/auth-apisix
         - cluster.local/ns/monitoring/sa/telemetry-kube-prometheus-prometheus
         - cluster.local/ns/chatqa/sa/client-test
+        - cluster.local/ns/mcp-gateway/sa/mcp-gateway
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
@@ -288,6 +289,43 @@ spec:
     - source:
         notPrincipals:
         - cluster.local/ns/chatqa/sa/retriever-usvc
+        - cluster.local/ns/monitoring/sa/telemetry-kube-prometheus-prometheus
+---
+# vllm-embedding-svc
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: chatqa-vllm-embedding-svc
+  namespace: chatqa
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm_embedding
+  action: DENY
+  rules:
+  - from:
+    - source:
+        notPrincipals:
+        - cluster.local/ns/chatqa/sa/embedding-usvc
+        - cluster.local/ns/edp/sa/edp-chart
+        - cluster.local/ns/monitoring/sa/telemetry-kube-prometheus-prometheus
+---
+# vllm-reranking-svc
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: chatqa-vllm-reranking-svc
+  namespace: chatqa
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm_reranking
+  action: DENY
+  rules:
+  - from:
+    - source:
+        notPrincipals:
+        - cluster.local/ns/chatqa/sa/reranking-usvc
         - cluster.local/ns/monitoring/sa/telemetry-kube-prometheus-prometheus
 ---
 # vllm-query-rewrite-svc
